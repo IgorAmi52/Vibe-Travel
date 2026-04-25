@@ -123,6 +123,51 @@ class SkyscannerFlightClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.results[0].outbound_chain.origin_iata, "VIE")
         self.assertEqual(result.results[0].inbound_chain.origin_iata, "LON")
 
+    async def test_indicative_anywhere_payload_and_mapping(self) -> None:
+        connector = _FakeConnector(
+            [
+                {
+                    "status": "RESULT_STATUS_COMPLETE",
+                    "content": {
+                        "results": {
+                            "quotes": {
+                                "q-1": {
+                                    "minPrice": {"amount": "89", "unit": "EUR"},
+                                    "isDirect": True,
+                                    "outboundLeg": {
+                                        "originPlaceId": "p-vie",
+                                        "destinationPlaceId": "p-agp",
+                                        "departureDateTime": {"year": 2026, "month": 7, "day": 1},
+                                        "marketingCarrierId": "c-1",
+                                    },
+                                }
+                            },
+                            "places": {
+                                "p-vie": {"name": "Vienna", "iata": "VIE", "entityId": "27544008"},
+                                "p-agp": {"name": "Malaga", "iata": "AGP", "entityId": "95673381"},
+                            },
+                            "carriers": {"c-1": {"name": "Ryanair", "iata": "FR", "displayCode": "FR"}},
+                        }
+                    },
+                }
+            ]
+        )
+        client = SkyscannerFlightClient(
+            base_url="https://example.test",
+            api_key="key",
+            api_host="host",
+            connector=connector,
+        )
+
+        result = await client.search_indicative_anywhere(origin_iata="VIE", outbound_date="2026-07-01")
+        path, kwargs = connector.post_calls[0]
+        self.assertEqual(path, "/api/v1/flights/indicative/search")
+        leg = kwargs["json"]["query"]["queryLegs"][0]
+        self.assertEqual(leg["originPlace"]["queryPlace"]["iata"], "VIE")
+        self.assertTrue(leg["destinationPlace"]["anywhere"])
+        self.assertEqual(result["status"], "RESULT_STATUS_COMPLETE")
+        self.assertEqual(result["quotes"][0]["destination"]["iata"], "AGP")
+
 
 class FlightChainServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_service_limits_and_sorts(self) -> None:

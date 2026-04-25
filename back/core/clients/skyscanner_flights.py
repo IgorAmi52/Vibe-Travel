@@ -25,6 +25,12 @@ class SkyscannerFlightClient:
         "/v1/flights/live/search/poll",
         "/v3/flights/live/search/poll",
     )
+    INDICATIVE_SEARCH_PATHS = (
+        "/api/v1/flights/indicative/search",
+        "/v1/flights/indicative/search",
+        "/apiservices/v3/flights/indicative/search",
+        "/v3/flights/indicative/search",
+    )
 
     def __init__(
         self,
@@ -106,6 +112,27 @@ class SkyscannerFlightClient:
     async def close(self) -> None:
         await self._connector.close()
 
+    async def search_indicative_anywhere(
+        self,
+        *,
+        origin_iata: str,
+        outbound_date: str,
+        market: str = "UK",
+        locale: str = "en-GB",
+        currency: str = "EUR",
+    ) -> dict[str, Any]:
+        payload = await self._post_with_path_fallback(
+            self.INDICATIVE_SEARCH_PATHS,
+            json=self._build_indicative_anywhere_payload(
+                origin_iata=origin_iata,
+                outbound_date=outbound_date,
+                market=market,
+                locale=locale,
+                currency=currency,
+            ),
+        )
+        return self._parse_indicative_payload(payload)
+
     async def _post_with_path_fallback(self, paths: tuple[str, ...], **kwargs: Any) -> dict[str, Any]:
         from httpx import HTTPStatusError
 
@@ -149,6 +176,71 @@ class SkyscannerFlightClient:
                 "includeSustainabilityData": False,
                 "nonStop": params.direct_only,
             }
+        }
+
+    @staticmethod
+    def _build_indicative_anywhere_payload(
+        *,
+        origin_iata: str,
+        outbound_date: str,
+        market: str,
+        locale: str,
+        currency: str,
+    ) -> dict[str, Any]:
+        year, month, day = (int(part) for part in outbound_date.split("-", 2))
+        return {
+            "query": {
+                "market": market,
+                "locale": locale,
+                "currency": currency,
+                "queryLegs": [
+                    {
+                        "originPlace": {"queryPlace": {"iata": origin_iata}},
+                        "destinationPlace": {"anywhere": True},
+                        "fixedDate": {"year": year, "month": month, "day": day},
+                    }
+                ],
+            }
+        }
+
+    @staticmethod
+    def _parse_indicative_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        content = payload.get("content", {})
+        results = content.get("results", {})
+        quotes = results.get("quotes", {})
+        places = results.get("places", {})
+        carriers = results.get("carriers", {})
+
+        mapped_quotes: list[dict[str, Any]] = []
+        for quote_id, quote in quotes.items():
+            if not isinstance(quote, dict):
+                continue
+            outbound_leg = quote.get("outboundLeg", {}) if isinstance(quote.get("outboundLeg"), dict) else {}
+            inbound_leg = quote.get("inboundLeg", {}) if isinstance(quote.get("inboundLeg"), dict) else {}
+            origin_place_id = outbound_leg.get("originPlaceId")
+            destination_place_id = outbound_leg.get("destinationPlaceId")
+            carrier_id = outbound_leg.get("marketingCarrierId")
+            min_price = quote.get("minPrice", {}) if isinstance(quote.get("minPrice"), dict) else {}
+
+            mapped_quotes.append(
+                {
+                    "quote_id": str(quote_id),
+                    "price_amount": SkyscannerFlightClient._float_or_none(min_price.get("amount")),
+                    "price_unit": SkyscannerFlightClient._string_or_none(min_price.get("unit")),
+                    "is_direct": bool(quote.get("isDirect")),
+                    "origin": SkyscannerFlightClient._place_from_index(origin_place_id, places),
+                    "destination": SkyscannerFlightClient._place_from_index(destination_place_id, places),
+                    "carrier": SkyscannerFlightClient._carrier_from_index(carrier_id, carriers),
+                    "outbound_departure": SkyscannerFlightClient._datetime_to_iso(outbound_leg.get("departureDateTime")),
+                    "inbound_departure": SkyscannerFlightClient._datetime_to_iso(inbound_leg.get("departureDateTime")),
+                    "raw_payload": quote,
+                }
+            )
+
+        return {
+            "status": str(payload.get("status", "RESULT_STATUS_UNSPECIFIED")),
+            "quotes": mapped_quotes,
+            "raw_payload": payload,
         }
 
     def _parse_poll_payload(self, payload: dict[str, Any]) -> LivePricesPollResult:
@@ -335,6 +427,48 @@ class SkyscannerFlightClient:
             node = index.get(ref)
             return node if isinstance(node, dict) else None
         return None
+
+    @staticmethod
+    def _place_from_index(ref: Any, places: dict[str, Any]) -> dict[str, Any] | None:
+        if ref is None:
+            return None
+        node = places.get(str(ref))
+        if not isinstance(node, dict):
+            return None
+        return {
+            "id": str(ref),
+            "name": SkyscannerFlightClient._string_or_none(node.get("name")),
+            "iata": SkyscannerFlightClient._string_or_none(node.get("iata")),
+            "entity_id": SkyscannerFlightClient._string_or_none(node.get("entityId")),
+        }
+
+    @staticmethod
+    def _carrier_from_index(ref: Any, carriers: dict[str, Any]) -> dict[str, Any] | None:
+        if ref is None:
+            return None
+        node = carriers.get(str(ref))
+        if not isinstance(node, dict):
+            return None
+        return {
+            "id": str(ref),
+            "name": SkyscannerFlightClient._string_or_none(node.get("name")),
+            "iata": SkyscannerFlightClient._string_or_none(node.get("iata")),
+            "display_code": SkyscannerFlightClient._string_or_none(node.get("displayCode")),
+        }
+
+    @staticmethod
+    def _datetime_to_iso(value: Any) -> str | None:
+        if not isinstance(value, dict):
+            return None
+        year = value.get("year")
+        month = value.get("month")
+        day = value.get("day")
+        if year is None or month is None or day is None:
+            return None
+        hour = int(value.get("hour", 0))
+        minute = int(value.get("minute", 0))
+        second = int(value.get("second", 0))
+        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}T{hour:02d}:{minute:02d}:{second:02d}"
 
     @staticmethod
     def _string_or_none(value: Any) -> str | None:
