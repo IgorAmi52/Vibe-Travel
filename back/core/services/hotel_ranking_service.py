@@ -36,11 +36,13 @@ class HotelRankingService:
     async def rank_hotels(
         self,
         vibe_query: str,
-        entity_id: str,
+        destination: str,
         check_in: date,
         check_out: date,
         currency: str = "USD",
     ) -> list[ScoredHotel]:
+        entity_id = await self._resolve_city_entity(destination)
+
         search_results = await self._hotel_api.indicative_search(
             entity_id=entity_id,
             check_in=check_in,
@@ -48,33 +50,60 @@ class HotelRankingService:
             currency=currency,
         )
         if not search_results:
-            raise ValueError(f"No hotels found for entity '{entity_id}'")
+            raise ValueError(f"No hotels found for '{destination}' (entity={entity_id})")
 
         hotel_ids = [h.hotel_id for h in search_results]
         logger.info("Found %d hotels for entity '%s'", len(hotel_ids), entity_id)
 
-        contents, reviews_by_hotel = await self._fetch_hotel_data(hotel_ids)
-        hotels = self._build_hotels(search_results, contents, reviews_by_hotel)
+        contents, descriptions, reviews_by_hotel = await self._fetch_hotel_data(hotel_ids)
+        hotels = self._build_hotels(search_results, contents, descriptions, reviews_by_hotel)
         similarities = await self._compute_similarities(vibe_query, hotels)
 
         return self._score_and_rank(hotels, similarities)
 
+    async def _resolve_city_entity(self, destination: str) -> str:
+        destinations = await self._hotel_api.autosuggest(destination)
+        if not destinations:
+            raise ValueError(f"No destinations found for '{destination}'")
+
+        city = next((d for d in destinations if d.dest_type == "city"), None)
+        if not city:
+            raise ValueError(
+                f"No city-level destination found for '{destination}'. "
+                f"Got: {[(d.name, d.dest_type) for d in destinations]}"
+            )
+
+        logger.info("Resolved '%s' → %s (entity=%s)", destination, city.name, city.entity_id)
+        return city.entity_id
+
     async def _fetch_hotel_data(
         self, hotel_ids: list[str],
-    ) -> tuple[list[HotelContent], dict[str, list[HotelReview]]]:
+    ) -> tuple[list[HotelContent], dict[str, str | None], dict[str, list[HotelReview]]]:
         content_task = self._hotel_api.get_content(hotel_ids)
+        description_tasks = [self._hotel_api.get_description(hid) for hid in hotel_ids]
         review_tasks = [
             self._hotel_api.get_reviews(hid, limit=MAX_REVIEWS_TO_FETCH)
             for hid in hotel_ids
         ]
 
-        results = await asyncio.gather(content_task, *review_tasks, return_exceptions=True)
+        results = await asyncio.gather(
+            content_task, *description_tasks, *review_tasks, return_exceptions=True,
+        )
         content_result = results[0]
-        review_results = results[1:]
+        desc_results = results[1:1 + len(hotel_ids)]
+        review_results = results[1 + len(hotel_ids):]
 
         contents: list[HotelContent] = content_result if not isinstance(content_result, BaseException) else []
         if isinstance(content_result, BaseException):
             logger.warning("Content fetch failed: %s", content_result)
+
+        descriptions_by_hotel: dict[str, str | None] = {}
+        for hid, result in zip(hotel_ids, desc_results):
+            if isinstance(result, BaseException):
+                logger.warning("Description fetch failed for %s: %s", hid, result)
+                descriptions_by_hotel[hid] = None
+            else:
+                descriptions_by_hotel[hid] = result
 
         reviews_by_hotel: dict[str, list[HotelReview]] = {}
         for hid, result in zip(hotel_ids, review_results):
@@ -84,12 +113,13 @@ class HotelRankingService:
             else:
                 reviews_by_hotel[hid] = result
 
-        return contents, reviews_by_hotel
+        return contents, descriptions_by_hotel, reviews_by_hotel
 
     @staticmethod
     def _build_hotels(
         search_results: list[HotelSearchResult],
         contents: list[HotelContent],
+        descriptions_by_hotel: dict[str, str | None],
         reviews_by_hotel: dict[str, list[HotelReview]],
     ) -> list[Hotel]:
         content_map = {c.hotel_id: c for c in contents}
@@ -97,20 +127,24 @@ class HotelRankingService:
         for result in search_results:
             hid = result.hotel_id
             content = content_map.get(hid)
+            description = descriptions_by_hotel.get(hid)
             reviews = reviews_by_hotel.get(hid, [])
             review_texts = [r.content for r in reviews if r.content]
+
+            images = result.photo_urls or (content.images if content else [])
 
             hotels.append(Hotel(
                 hotel_id=hid,
                 name=content.name if content else result.name,
                 price=result.price.gross_amount if result.price else None,
                 currency=result.price.currency if result.price else None,
-                description=content.description if content else None,
+                description=description,
                 amenities=content.amenities if content else [],
                 star_rating=content.star_rating if content else None,
                 guest_rating=content.guest_rating if content else result.review_score,
                 accommodation_type=content.accommodation_type if content else None,
                 reviews=review_texts,
+                images=images,
             ))
         return hotels
 

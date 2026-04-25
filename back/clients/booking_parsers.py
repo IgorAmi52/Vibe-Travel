@@ -29,6 +29,7 @@ def parse_destinations(data: Any) -> list[Destination]:
         results.append(Destination(
             entity_id=str(item.get("dest_id", "")),
             name=item.get("name", ""),
+            dest_type=item.get("dest_type", ""),
             hierarchy=item.get("country", ""),
             location=location,
         ))
@@ -128,6 +129,28 @@ def parse_hotel_detail(data: Any) -> HotelContent | None:
         accommodation_type=info.get("accommodation_type_name"),
         images=images,
     )
+
+
+def parse_description(data: Any) -> str | None:
+    """Extract the narrative property description from getDescriptionAndInfo."""
+    items = data.get("data", []) if isinstance(data, dict) else []
+    # descriptiontype_id 6 = property overview narrative; skip type 7 (policies/check-in info)
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("descriptiontype_id") == 6:
+            desc = item.get("description", "").strip()
+            if desc:
+                return desc
+    # Fallback: return the longest description that isn't policies
+    best = ""
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        desc = item.get("description", "").strip()
+        if len(desc) > len(best) and item.get("descriptiontype_id") != 7:
+            best = desc
+    return best or None
 
 
 def parse_reviews(data: Any) -> list[HotelReview]:

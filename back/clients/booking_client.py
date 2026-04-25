@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from httpx import HTTPStatusError
 
 from clients.api_connector import ApiConnector
-from clients.booking_parsers import parse_destinations, parse_hotel_detail, parse_hotel_search, parse_reviews
+from clients.booking_parsers import parse_description, parse_destinations, parse_hotel_detail, parse_hotel_search, parse_reviews
 from core.api.hotel_api_client import HotelApiClient
 from core.models.hotel import Destination, HotelContent, HotelReview, HotelSearchResult
 
@@ -97,6 +97,23 @@ class BookingComClient(HotelApiClient):
 
         results = await asyncio.gather(*(fetch_one(hid) for hid in hotel_ids))
         return [r for r in results if r is not None]
+
+    async def get_description(self, hotel_id: str) -> str | None:
+        params = {
+            "hotel_id": hotel_id,
+            "languagecode": self._language_code,
+        }
+        try:
+            response = await self._api.get(
+                "/api/v1/hotels/getDescriptionAndInfo", params=params,
+            )
+        except HTTPStatusError as exc:
+            logger.error("Description fetch failed for hotel '%s': %s", hotel_id, exc)
+            if self._should_raise(exc):
+                raise
+            return None
+
+        return parse_description(response.json())
 
     async def get_reviews(self, hotel_id: str, limit: int = 30) -> list[HotelReview]:
         all_reviews: list[HotelReview] = []

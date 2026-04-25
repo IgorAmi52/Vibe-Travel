@@ -25,5 +25,9 @@ class HotelApiClient(ABC):
         """Fetch static content (description, amenities, ratings) for given hotel IDs."""
 
     @abstractmethod
+    async def get_description(self, hotel_id: str) -> str | None:
+        """Fetch the narrative property description for a single hotel."""
+
+    @abstractmethod
     async def get_reviews(self, hotel_id: str, limit: int = 30) -> list[HotelReview]:
         """Fetch guest reviews for a single hotel."""

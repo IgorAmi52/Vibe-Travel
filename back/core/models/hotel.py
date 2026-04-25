@@ -13,6 +13,7 @@ class Hotel:
     guest_rating: float | None = None
     accommodation_type: str | None = None
     reviews: list[str] = field(default_factory=list)
+    images: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -57,6 +58,7 @@ class GeoCoordinates:
 class Destination:
     entity_id: str
     name: str
+    dest_type: str
     hierarchy: str
     location: GeoCoordinates | None = None
 

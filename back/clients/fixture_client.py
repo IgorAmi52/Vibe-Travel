@@ -4,7 +4,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from clients.booking_parsers import parse_destinations, parse_hotel_detail, parse_hotel_search, parse_reviews
+from clients.booking_parsers import parse_description, parse_destinations, parse_hotel_detail, parse_hotel_search, parse_reviews
 from core.api.hotel_api_client import HotelApiClient
 from core.models.hotel import Destination, HotelContent, HotelReview, HotelSearchResult
 
@@ -77,6 +77,13 @@ class FixtureHotelApiClient(HotelApiClient):
             if parsed:
                 results.append(parsed)
         return results
+
+    async def get_description(self, hotel_id: str) -> str | None:
+        path = self._find_file("descriptions", f"{hotel_id}.json")
+        if not path:
+            return None
+        data = self._load(path)
+        return parse_description(data) if data else None
 
     async def get_reviews(self, hotel_id: str, limit: int = 30) -> list[HotelReview]:
         path = self._find_file("reviews", f"{hotel_id}.json")
