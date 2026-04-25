@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from core.api import handle_invoke_request
 from core.app import create_app
-from core.clients.gemini import GeminiIntentClient
+from clients.gemini import GeminiIntentClient
 from core.config import DEFAULT_PROMPT_PATH, AppConfig, load_app_config, load_env_file, load_markdown_prompt
 from core.graph import LANGGRAPH_AVAILABLE
 from core.state import TripPlannerState, create_initial_state

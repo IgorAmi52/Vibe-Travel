@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.clients import GeminiIntentClient, SyntheticIntentClient
+from clients import GeminiIntentClient, SyntheticIntentClient
 from core.clients.base import IntentInferenceClient
 from core.config import AppConfig, load_app_config, load_markdown_prompt
 from core.graph import NodeHandler, TripPlannerGraphBuilder
