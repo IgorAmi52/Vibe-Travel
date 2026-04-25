@@ -20,8 +20,10 @@ architecture/  → Specs and design docs for modules
 ```
 
 ### `core/`
-- `core/models/` — Pydantic domain models (IntentStruct, RankedCandidate, Hotel, etc.)
-- `core/api/` — Abstract interfaces (ports). Every external dependency gets an interface here first.
+- `core/models/` — Domain models as **dataclasses** (Hotel, ScoredHotel, etc.)
+- `core/dto/` — Pydantic request/response schemas (API boundary DTOs).
+- `core/api/` — Abstract interfaces (ports) for external API clients.
+- `core/services/` — Abstract interfaces (ports) for service-level dependencies (e.g., EmbedProvider).
 
 ### `clients/`
 - Concrete implementations of `core/api/` interfaces.
@@ -30,13 +32,13 @@ architecture/  → Specs and design docs for modules
 
 ### Feature modules (e.g., `hotel/`, `intent/`, `ranking/`)
 - Each feature owns its service layer, router, and orchestration.
-- Services depend on `core/api/` interfaces, never on `clients/` directly.
+- Services depend on `core/api/` and `core/services/` interfaces, never on `clients/` directly.
 
 ## Conventions
 
 - **Python 3.12+**, FastAPI, Pydantic v2, async/await everywhere.
-- **Interfaces for all external dependencies** — define in `core/api/`, implement in `clients/`.
-- **Pydantic models for all data structures** — define in `core/models/`.
+- **Interfaces for all external dependencies** — API clients in `core/api/`, service ports in `core/services/`, implement in `clients/`.
+- **Dataclasses for domain models** — define in `core/models/`. Pydantic only for DTOs in `core/dto/`.
 - **Async by default** — all I/O operations are async. Use `httpx.AsyncClient`, not `requests`.
 - **Conventional commits** — `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`.
 - **No dumb comments** — only comment genuinely non-obvious behavior.
