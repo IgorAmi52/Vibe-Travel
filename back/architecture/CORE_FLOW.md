@@ -94,6 +94,9 @@ Shared state passed between graph nodes (TypedDict for LangGraph).
 | `trip_intent` | `IntentStruct \| None` | `None` |
 | `next_step` | `str \| None` | `"extract_intent"` |
 | `errors` | `list[str]` | `[]` |
+| `needs_clarification` | `bool` | `False` |
+| `clarification_prompt` | `str \| None` | `None` |
+| `iteration` | `int` | `0` (incremented to `1` on first run) |
 
 ---
 
@@ -126,6 +129,22 @@ app.append_graph_part("prepare_geo", PrepareGeoNode())
 ```
 
 Nodes execute in registration order. Each node reads from the full shared state and returns only the fields it updates.
+
+### Requesting clarification from a node
+
+Any node can halt the pipeline by returning these two fields:
+
+```python
+def __call__(self, state):
+    if not state.get("trip_intent", {}).get("start_date"):
+        return {
+            "needs_clarification": True,
+            "clarification_prompt": "What are your travel dates?",
+        }
+    return {"status": "ready"}
+```
+
+The graph runs to END normally — the HTTP layer surfaces `needs_clarification` and `clarification_prompt` at the top level of the response. On the next request the frontend sends `type: "CLARIFICATION"` with the user's answer and the prior `state`; the graph re-enters at `extract_intent`.
 
 ### Adding an Inference Client
 
@@ -162,17 +181,76 @@ class SkyscannerClient:
 |--------|-------|-------------|
 | `GET` | `/health` | Returns `{ status, default_mode }` |
 | `GET` | `/schema` | Returns JSON schema for `IntentStruct` |
-| `POST` | `/invoke` | Runs the graph, returns `{ state }` |
+| `POST` | `/invoke` | Runs the full graph from `extract_intent`, returns a success or clarification response |
 
-`POST /invoke` payload:
+### `POST /invoke` — request
 
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"NEW" \| "CLARIFICATION"` | yes | `NEW` starts a fresh session; `CLARIFICATION` continues after a clarification prompt |
+| `user_query` | `string` | yes | Free-form travel query or the user's answer to a clarification prompt |
+| `mode` | `"mock" \| "gemini"` | no | Inference backend (defaults to config) |
+| `source` | `string` | no | Request origin label, default `"network"` |
+| `state` | `object` | `CLARIFICATION` only | The `state` object from the previous response — carries `iteration` and prior intent |
+| `mock_response` | `object` | no | Override `IntentStruct` for mock mode |
+
+Both request types enter the graph at `extract_intent`. The graph always runs the full node chain from the beginning.
+
+### `POST /invoke` — responses
+
+**Success** (`200`) — pipeline completed, no clarification needed:
 ```json
 {
-  "user_query": "Plan an Alps ski trip",
-  "mode": "mock",
-  "mock_response": { ... }
+  "state": {
+    "status": "intent_ready",
+    "trip_intent": { "places": ["Chamonix"], "start_date": "2026-12-20", ... },
+    "iteration": 1
+  }
 }
 ```
+
+**Needs clarification** (`200`) — a node broke out requesting more user input:
+```json
+{
+  "needs_clarification": true,
+  "clarification_prompt": "Could you add your travel dates and budget?",
+  "state": {
+    "status": "needs_clarification",
+    "iteration": 1,
+    ...
+  }
+}
+```
+
+`needs_clarification` and `clarification_prompt` are present at the top level **only** when a node signals them. Normal responses omit both keys entirely.
+
+### Clarification loop
+
+```
+frontend                                          backend
+   │                                                 │
+   │  POST /invoke { type: "NEW",                    │
+   │    user_query: "Alps ski trip" }                │
+   │ ──────────────────────────────────────────────► │ extract_intent → ... → check_completeness
+   │                                                 │   ↳ needs_clarification: true
+   │ ◄────────────────────────────────────────────── │
+   │  { needs_clarification: true,                   │
+   │    clarification_prompt: "What are your dates?",│
+   │    state: { iteration: 1, ... } }               │
+   │                                                 │
+   │  [show prompt to user, collect answer]          │
+   │                                                 │
+   │  POST /invoke { type: "CLARIFICATION",          │
+   │    user_query: "20–27 Dec, budget 2500",        │
+   │    state: { iteration: 1, ... } }               │
+   │ ──────────────────────────────────────────────► │ extract_intent → ... → check_completeness
+   │                                                 │   ↳ all criteria met
+   │ ◄────────────────────────────────────────────── │
+   │  { state: { status: "intent_ready",             │
+   │    trip_intent: { ... }, iteration: 2 } }       │
+```
+
+This loop can repeat as many times as needed. `iteration` increments on every run and is available to all nodes via `state["iteration"]`.
 
 ---
 

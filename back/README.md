@@ -45,12 +45,25 @@ Start the HTTP API:
 python3 main.py serve --host 127.0.0.1 --port 8080
 ```
 
-Example request:
+New request:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/invoke \
   -H 'Content-Type: application/json' \
-  -d '{"user_query": "Plan an Alps ski trip", "mode": "mock"}'
+  -d '{"type": "NEW", "user_query": "Plan an Alps ski trip", "mode": "mock"}'
+```
+
+If the response contains `needs_clarification: true`, show `clarification_prompt` to the user and send their answer as a `CLARIFICATION` request, passing the prior `state` back:
+
+```bash
+curl -X POST http://127.0.0.1:8080/invoke \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "type": "CLARIFICATION",
+    "user_query": "Dec 20–27, budget 2500",
+    "mode": "mock",
+    "state": <state from previous response>
+  }'
 ```
 
 Flight roundtrip chains (Skyscanner):
