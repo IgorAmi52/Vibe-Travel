@@ -1,2 +1,5 @@
 back/venv/
 back/.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
