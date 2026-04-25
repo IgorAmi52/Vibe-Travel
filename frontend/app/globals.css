@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ebecee;
+  --foreground: #071d3d;
+  --ss-navy: #071d3d;
+  --ss-navy-light: #0f2f52;
+  --ss-accent: #0062e3;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+@keyframes sparkle-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+.animate-sparkle-pulse {
+  animation: sparkle-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-sparkle-pulse {
+    animation: none;
+  }
+}
