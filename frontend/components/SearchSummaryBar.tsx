@@ -22,25 +22,18 @@ export function SearchSummaryBar({
   return (
     <div>
       {/* Navy header block — search bar overlaps bottom edge into the grey canvas */}
-      <div className="relative z-30 bg-ss-navy pb-12 md:pb-14">
-        <div className="mx-auto flex max-w-[1400px] items-center gap-3 px-4 py-2.5 md:px-6 md:py-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-ss-accent shadow-sm">
-            <svg
-              className="h-4 w-4 text-white"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2.25}
-              viewBox="0 0 24 24"
-              aria-hidden
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
-            </svg>
-          </div>
-          <p className="min-w-0 flex-1 text-sm font-medium leading-snug text-white md:text-base">
+      <div className="relative z-30 bg-gradient-to-b from-ss-navy via-ss-navy to-ss-navy-light pb-8 md:pb-9">
+        <div className="mx-auto flex max-w-[1400px] items-center gap-2.5 px-4 pb-2 pt-0.5 md:px-6 md:pb-2.5">
+          <svg
+            className="h-[18px] w-[18px] shrink-0 text-ss-orange"
+            fill="currentColor"
+            viewBox="0 0 24 24"
+            aria-hidden
+          >
+            <path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+            <path d="M18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
+          </svg>
+          <p className="min-w-0 flex-1 text-sm font-semibold leading-snug text-white md:text-[15px]">
             {displayTheme}
           </p>
         </div>
@@ -79,7 +72,7 @@ export function SearchSummaryBar({
       </div>
 
       {/* Reserve vertical space for the half of the search bar that sits over the results canvas */}
-      <div className="pt-12 md:pt-14" aria-hidden />
+      <div className="pt-8 md:pt-9" aria-hidden />
     </div>
   );
 }
