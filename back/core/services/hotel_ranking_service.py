@@ -184,6 +184,9 @@ class HotelRankingService:
         scored.sort(key=lambda s: s.composite_score, reverse=True)
         return scored
 
+    async def close(self) -> None:
+        await self._hotel_api.close()
+
     @staticmethod
     def _normalize_price_scores(hotels: list[Hotel]) -> list[float]:
         valid_prices = [h.price for h in hotels if h.price is not None and h.price > 0]

@@ -33,3 +33,7 @@ class HotelApiClient(ABC):
     @abstractmethod
     async def get_reviews(self, hotel_id: str, limit: int = 30) -> list[HotelReview]:
         """Fetch guest reviews for a single hotel."""
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Release any underlying network resources."""

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -12,10 +13,7 @@ from core.config import load_app_config
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    _configure_logging()
 
     parser = argparse.ArgumentParser(description="Trip planner runner")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -53,6 +51,33 @@ def _load_mock_file(mock_file: Optional[str]) -> Optional[Dict[str, Any]]:
     if not mock_file:
         return None
     return json.loads(Path(mock_file).read_text(encoding="utf-8"))
+
+
+def _configure_logging() -> None:
+    log_dir = Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "trip_planner.log"
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=2_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[console_handler, file_handler],
+        force=True,
+    )
 
 
 if __name__ == "__main__":

@@ -270,9 +270,12 @@ async def _run_flight_chain_request(
 
 
 def _merge_request_state(state: Dict[str, Any], payload: Dict[str, Any]) -> None:
-    for field_name in ("origin_iata", "destination_iata"):
+    for field_name in ("origin_iata", "destination_iata", "destination_place"):
         if payload.get(field_name):
             state[field_name] = str(payload[field_name]).strip()
+
+    if payload.get("person_count") is not None:
+        state["person_count"] = int(payload["person_count"])
 
     explicit_trip_intent = dict(state.get("trip_intent") or {})
     if isinstance(payload.get("trip_intent"), dict):

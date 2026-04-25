@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared parsers for Booking.com API response format.
 
 Used by both BookingComClient (live API) and FixtureHotelApiClient (recorded fixtures).

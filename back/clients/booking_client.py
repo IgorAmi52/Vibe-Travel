@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 from datetime import date, timedelta
@@ -142,3 +144,6 @@ class BookingComClient(HotelApiClient):
             page += 1
 
         return all_reviews[:limit]
+
+    async def close(self) -> None:
+        await self._api.close()

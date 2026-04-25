@@ -97,8 +97,11 @@ class TripPlannerState:
     status: str = "received"
     trip_intent: Optional[IntentStruct] = None
     origin_iata: Optional[str] = None
+    destination_place: Optional[str] = None
     destination_iata: Optional[str] = None
     flight_results: List[Dict[str, Any]] = field(default_factory=list)
+    hotel_results: List[Dict[str, Any]] = field(default_factory=list)
+    grouped_results: List[Dict[str, Any]] = field(default_factory=list)
     person_count: int = 1
     next_step: Optional[str] = "extract_intent"
     errors: List[str] = field(default_factory=list)
@@ -121,8 +124,11 @@ class TripPlannerState:
             status=payload.get("status", "received"),
             trip_intent=IntentStruct.from_dict(trip_intent) if trip_intent else None,
             origin_iata=payload.get("origin_iata"),
+            destination_place=payload.get("destination_place"),
             destination_iata=payload.get("destination_iata"),
             flight_results=list(payload.get("flight_results") or []),
+            hotel_results=list(payload.get("hotel_results") or []),
+            grouped_results=list(payload.get("grouped_results") or []),
             person_count=int(payload.get("person_count", 1) or 1),
             next_step=payload.get("next_step", "extract_intent"),
             errors=list(payload.get("errors") or []),
@@ -142,8 +148,11 @@ class TripPlannerGraphState(TypedDict, total=False):
     status: str
     trip_intent: Dict[str, Any]
     origin_iata: Optional[str]
+    destination_place: Optional[str]
     destination_iata: Optional[str]
     flight_results: List[Dict[str, Any]]
+    hotel_results: List[Dict[str, Any]]
+    grouped_results: List[Dict[str, Any]]
     person_count: int
     next_step: Optional[str]
     errors: List[str]

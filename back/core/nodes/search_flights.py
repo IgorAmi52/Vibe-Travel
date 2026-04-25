@@ -20,6 +20,7 @@ class SearchFlightsNode:
 
     async def _execute(self, state: TripPlannerGraphState) -> Dict[str, Any]:
         origin_iata = _normalize_search_value(state.get("origin_iata")) or "BCN"
+        destination_place = _normalize_search_value(state.get("destination_place"))
         destination_iata = _normalize_search_value(state.get("destination_iata"))
         intent = state.get("trip_intent") or {}
         places = [place for place in (intent.get("places") or []) if _normalize_search_value(place)]
@@ -29,14 +30,21 @@ class SearchFlightsNode:
 
         try:
             if not destination_iata and places:
-                destination_iata, _ = await self._resolve_first_iata(places)
+                destination_iata, destination_place = await self._resolve_first_iata(places)
+            elif not destination_place and places:
+                destination_place = places[0]
+            elif not destination_place:
+                destination_place = destination_iata
 
             if not destination_iata and places:
                 attempted_places = ", ".join(places)
                 return {
+                    "hotel_results": [],
+                    "grouped_results": [],
                     "status": "needs_clarification",
                     "next_step": "search_flights",
                     "origin_iata": origin_iata,
+                    "destination_place": destination_place,
                     "needs_clarification": True,
                     "clarification_prompt": (
                         f"I couldn't resolve an airport for any of these places: {attempted_places}. "
@@ -65,6 +73,8 @@ class SearchFlightsNode:
                     )
                     if not isinstance(indicative, dict):
                         return {
+                            "hotel_results": [],
+                            "grouped_results": [],
                             "status": "needs_clarification",
                             "next_step": "search_flights",
                             "needs_clarification": True,
@@ -76,6 +86,8 @@ class SearchFlightsNode:
                     quotes = list(indicative.get("quotes") or [])
             except Exception as exc:
                 return {
+                    "hotel_results": [],
+                    "grouped_results": [],
                     "status": "needs_clarification",
                     "next_step": "search_flights",
                     "needs_clarification": True,
@@ -87,6 +99,8 @@ class SearchFlightsNode:
 
             if not quotes:
                 return {
+                    "hotel_results": [],
+                    "grouped_results": [],
                     "status": "needs_clarification",
                     "next_step": "search_flights",
                     "needs_clarification": True,
@@ -98,7 +112,10 @@ class SearchFlightsNode:
 
             return {
                 "flight_results": quotes,
+                "hotel_results": [],
+                "grouped_results": [],
                 "origin_iata": origin_iata,
+                "destination_place": destination_place,
                 "destination_iata": destination_iata,
                 "person_count": person_count,
                 "status": "flights_ready" if has_full_dates else "indicative_flights_ready",

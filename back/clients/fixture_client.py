@@ -92,6 +92,9 @@ class FixtureHotelApiClient(HotelApiClient):
         data = self._load(path)
         return parse_reviews(data)[:limit] if data else []
 
+    async def close(self) -> None:
+        return None
+
     def _find_file(self, subfolder: str, filename: str) -> Path | None:
         for dest_dir in self._entity_index.values():
             candidate = dest_dir / subfolder / filename

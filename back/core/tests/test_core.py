@@ -72,12 +72,12 @@ class CoreModuleTests(unittest.TestCase):
     def test_app_invocation_uses_mock_mode_by_default(self) -> None:
         app = create_app(self.config)
         result = app.run(
-            "I want an active Alps trip with skiing from 2026-12-20 to 2026-12-27 for 2400",
+            "I want an active Alps trip with skiing for 2400",
             state={"origin_iata": "VIE", "destination_iata": "CMF"},
         )
 
-        self.assertEqual(result["status"], "flights_ready")
-        self.assertEqual(result["next_step"], "search_hotels")
+        self.assertEqual(result["status"], "indicative_flights_ready")
+        self.assertEqual(result["next_step"], "select_dates")
         self.assertEqual(result["trip_intent"]["places"], ["Chamonix", "Zermatt"])
         self.assertEqual(result["trip_intent"]["countries"], ["France", "Switzerland"])
         self.assertEqual(result["trip_intent"]["budget"], 2400)
@@ -85,6 +85,8 @@ class CoreModuleTests(unittest.TestCase):
         self.assertIsNone(result["clarification_prompt"])
         self.assertEqual(result["iteration"], 1)
         self.assertGreater(len(result["flight_results"]), 0)
+        self.assertEqual(result["hotel_results"], [])
+        self.assertEqual(result["grouped_results"], [])
 
     def test_app_can_append_more_graph_parts(self) -> None:
         app = create_app(self.config)
@@ -162,8 +164,8 @@ class CoreModuleTests(unittest.TestCase):
                 "mock_response": {
                     "places": ["Val d'Isere"],
                     "countries": ["France"],
-                    "start_date": "2026-12-20",
-                    "end_date": "2026-12-27",
+                    "start_date": None,
+                    "end_date": None,
                     "budget": 1800,
                     "vibe": ["ski in ski out", "spa"],
                 },
@@ -171,9 +173,11 @@ class CoreModuleTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["state"]["trip_intent"]["places"], ["Val d'Isere"])
-        self.assertEqual(payload["state"]["status"], "flights_ready")
-        self.assertEqual(payload["state"]["next_step"], "search_hotels")
+        self.assertEqual(payload["state"]["status"], "indicative_flights_ready")
+        self.assertEqual(payload["state"]["next_step"], "select_dates")
         self.assertGreater(len(payload["state"]["flight_results"]), 0)
+        self.assertEqual(payload["state"]["hotel_results"], [])
+        self.assertEqual(payload["state"]["grouped_results"], [])
         self.assertNotIn("needs_clarification", payload)
 
     def test_iteration_increments_across_turns(self) -> None:
@@ -181,7 +185,7 @@ class CoreModuleTests(unittest.TestCase):
         result1 = app.run("I want an Alps ski trip")
         self.assertEqual(result1["iteration"], 1)
 
-        result2 = app.run("From 2026-12-20 to 2026-12-27", state=result1)
+        result2 = app.run("From Vienna please", state=result1)
         self.assertEqual(result2["iteration"], 2)
 
     def test_clarification_node_signals_are_surfaced(self) -> None:
@@ -219,7 +223,7 @@ class CoreModuleTests(unittest.TestCase):
         result1 = app.run("Trip somewhere", mode="mock")
         self.assertTrue(result1["needs_clarification"])
 
-        result2 = app.run("Trip from 2026-12-20 to 2026-12-27", state=result1, mode="mock")
+        result2 = app.run("Trip with a bit more detail", state=result1, mode="mock")
         self.assertFalse(result2["needs_clarification"])
         self.assertIsNone(result2["clarification_prompt"])
         self.assertEqual(result2["iteration"], 2)
@@ -269,7 +273,7 @@ class CoreModuleTests(unittest.TestCase):
             app,
             {
                 "type": "NEW",
-                "user_query": "Alps ski trip from 2026-12-20 to 2026-12-27",
+                "user_query": "Alps ski trip",
                 "mode": "mock",
                 "origin_iata": "VIE",
                 "destination_iata": "CMF",
@@ -277,6 +281,9 @@ class CoreModuleTests(unittest.TestCase):
         )
         self.assertNotIn("needs_clarification", payload)
         self.assertIn("state", payload)
+        self.assertEqual(payload["state"]["status"], "indicative_flights_ready")
+        self.assertEqual(payload["state"]["hotel_results"], [])
+        self.assertEqual(payload["state"]["grouped_results"], [])
 
     def test_flight_chain_rejects_return_before_departure(self) -> None:
         app = create_app(self.config)
@@ -500,6 +507,7 @@ class CoreModuleTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "flights_ready")
         self.assertEqual(result["origin_iata"], "BCN")
+        self.assertEqual(result["destination_place"], "Paris")
         self.assertEqual(result["destination_iata"], "CDG")
         self.assertEqual(result["next_step"], "search_hotels")
         self.assertEqual(len(provider.calls), 2)
@@ -579,6 +587,7 @@ class CoreModuleTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "indicative_flights_ready")
         self.assertEqual(result["origin_iata"], "BCN")
+        self.assertEqual(result["destination_place"], "Paris")
         self.assertEqual(result["destination_iata"], "CDG")
         self.assertEqual(result["next_step"], "select_dates")
         self.assertEqual(provider.calls[0]["destination_iata"], "CDG")
@@ -645,10 +654,55 @@ class CoreModuleTests(unittest.TestCase):
         result = node({"trip_intent": {"places": ["Chamonix", "Zermatt", "Grindelwald"]}})
 
         self.assertEqual(result["status"], "indicative_flights_ready")
+        self.assertEqual(result["destination_place"], "Zermatt")
         self.assertEqual(result["destination_iata"], "ZRH")
         self.assertEqual(result["next_step"], "select_dates")
         self.assertEqual(provider.calls[0]["destination_iata"], "ZRH")
         self.assertTrue(provider.closed)
+
+    @unittest.skipUnless(
+        os.environ.get("BOOKING_RAPIDAPI_KEY") and os.environ.get("GEMINI_API_KEY"),
+        "Real hotel ranking test requires BOOKING_RAPIDAPI_KEY and GEMINI_API_KEY",
+    )
+    def test_app_ranks_hotels_and_groups_results_after_full_flights(self) -> None:
+        app = create_app(self.config)
+        result = app.run(
+            "Four days in paris, with awesome spa center, I am going with my mom and dad",
+            state={
+                "origin_iata": "BCN",
+                "trip_intent": {
+                    "places": ["Paris"],
+                    "start_date": "2026-08-10",
+                    "end_date": "2026-08-14",
+                    "vibe": "family-friendly, spa center",
+                },
+            },
+        )
+
+        self.assertEqual(result["status"], "travel_options_ready")
+        self.assertEqual(result["destination_place"], "Paris")
+        self.assertGreater(len(result["hotel_results"]), 0)
+        self.assertGreater(len(result["grouped_results"]), 0)
+        self.assertIn("hotel", result["grouped_results"][0])
+        self.assertIn("flight", result["grouped_results"][0])
+
+    def test_app_skips_hotel_ranking_until_dates_are_known(self) -> None:
+        app = create_app(self.config)
+        result = app.run(
+            "Four days in paris, with awesome spa center",
+            state={
+                "origin_iata": "BCN",
+                "trip_intent": {
+                    "places": ["Paris"],
+                    "vibe": "spa center",
+                },
+            },
+        )
+
+        self.assertEqual(result["status"], "indicative_flights_ready")
+        self.assertEqual(result["next_step"], "select_dates")
+        self.assertEqual(result["hotel_results"], [])
+        self.assertEqual(result["grouped_results"], [])
 
 
 if __name__ == "__main__":
