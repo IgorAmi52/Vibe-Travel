@@ -17,9 +17,9 @@ TRIP_PLANNER_API_HOST=127.0.0.1
 TRIP_PLANNER_API_PORT=8080
 TRIP_PLANNER_GEMINI_MODEL=gemini-2.5-flash-lite
 TRIP_PLANNER_PROMPT_PATH=core/prompts/intent_extraction.md
-SKYSCANNER_BASE_URL=https://skyscanner89.p.rapidapi.com
-SKYSCANNER_API_KEY=your_rapidapi_key_here
-SKYSCANNER_API_HOST=skyscanner89.p.rapidapi.com
+SKYSCANNER_BASE_URL=https://partners.api.skyscanner.net
+SKYSCANNER_API_KEY=your_skyscanner_api_key_here
+SKYSCANNER_API_HOST=
 SKYSCANNER_TIMEOUT_SECONDS=30
 SKYSCANNER_MAX_RETRIES=3
 SKYSCANNER_RETRY_DELAY_SECONDS=1
@@ -45,12 +45,25 @@ Start the HTTP API:
 python3 main.py serve --host 127.0.0.1 --port 8080
 ```
 
-Example request:
+New request:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/invoke \
   -H 'Content-Type: application/json' \
-  -d '{"user_query": "Plan an Alps ski trip", "mode": "mock"}'
+  -d '{"type": "NEW", "user_query": "Plan an Alps ski trip", "mode": "mock"}'
+```
+
+If the response contains `needs_clarification: true`, show `clarification_prompt` to the user and send their answer as a `CLARIFICATION` request, passing the prior `state` back:
+
+```bash
+curl -X POST http://127.0.0.1:8080/invoke \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "type": "CLARIFICATION",
+    "user_query": "Dec 20–27, budget 2500",
+    "mode": "mock",
+    "state": <state from previous response>
+  }'
 ```
 
 Flight roundtrip chains (Skyscanner):

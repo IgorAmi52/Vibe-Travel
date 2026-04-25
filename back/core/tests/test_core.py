@@ -9,7 +9,15 @@ from core.api import handle_flight_chain_request, handle_flight_indicative_reque
 from core.app import create_app
 from clients.gemini import GeminiIntentClient
 from core.config import DEFAULT_PROMPT_PATH, AppConfig, load_app_config, load_env_file, load_markdown_prompt
+from core.flights import (
+    FlightChainService,
+    FlightLegChain,
+    FlightSegment,
+    LivePricesPollResult,
+    RoundTripChainResult,
+)
 from core.graph import LANGGRAPH_AVAILABLE
+from core.nodes.search_flights import SearchFlightsNode
 from core.state import TripPlannerState, create_initial_state
 
 
@@ -39,6 +47,9 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(state.next_step, "extract_intent")
         self.assertEqual(state.errors, [])
         self.assertIsNone(state.trip_intent)
+        self.assertFalse(state.needs_clarification)
+        self.assertIsNone(state.clarification_prompt)
+        self.assertEqual(state.iteration, 0)
 
     def test_prompt_loader_reads_markdown_prompt(self) -> None:
         prompt = load_markdown_prompt(DEFAULT_PROMPT_PATH)
@@ -60,15 +71,20 @@ class CoreModuleTests(unittest.TestCase):
 
     def test_app_invocation_uses_mock_mode_by_default(self) -> None:
         app = create_app(self.config)
-        result = TripPlannerState.from_dict(
-            app.run("I want an active Alps trip with skiing from 2026-12-20 to 2026-12-27 for 2400")
+        result = app.run(
+            "I want an active Alps trip with skiing from 2026-12-20 to 2026-12-27 for 2400",
+            state={"origin_iata": "VIE", "destination_iata": "CMF"},
         )
 
-        self.assertEqual(result.status, "intent_ready")
-        self.assertEqual(result.next_step, "search_flights")
-        self.assertEqual(result.trip_intent.places, ["Chamonix", "Zermatt"])
-        self.assertEqual(result.trip_intent.countries, ["France", "Switzerland"])
-        self.assertEqual(result.trip_intent.budget, 2400)
+        self.assertEqual(result["status"], "flights_ready")
+        self.assertEqual(result["next_step"], "search_hotels")
+        self.assertEqual(result["trip_intent"]["places"], ["Chamonix", "Zermatt"])
+        self.assertEqual(result["trip_intent"]["countries"], ["France", "Switzerland"])
+        self.assertEqual(result["trip_intent"]["budget"], 2400)
+        self.assertFalse(result["needs_clarification"])
+        self.assertIsNone(result["clarification_prompt"])
+        self.assertEqual(result["iteration"], 1)
+        self.assertGreater(len(result["flight_results"]), 0)
 
     def test_app_can_append_more_graph_parts(self) -> None:
         app = create_app(self.config)
@@ -138,8 +154,11 @@ class CoreModuleTests(unittest.TestCase):
         payload = handle_invoke_request(
             app,
             {
+                "type": "NEW",
                 "user_query": "Plan an Alps ski trip",
                 "mode": "mock",
+                "origin_iata": "VIE",
+                "destination_iata": "LYS",
                 "mock_response": {
                     "places": ["Val d'Isere"],
                     "countries": ["France"],
@@ -152,7 +171,112 @@ class CoreModuleTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["state"]["trip_intent"]["places"], ["Val d'Isere"])
-        self.assertEqual(payload["state"]["status"], "intent_ready")
+        self.assertEqual(payload["state"]["status"], "flights_ready")
+        self.assertEqual(payload["state"]["next_step"], "search_hotels")
+        self.assertGreater(len(payload["state"]["flight_results"]), 0)
+        self.assertNotIn("needs_clarification", payload)
+
+    def test_iteration_increments_across_turns(self) -> None:
+        app = create_app(self.config)
+        result1 = app.run("I want an Alps ski trip")
+        self.assertEqual(result1["iteration"], 1)
+
+        result2 = app.run("From 2026-12-20 to 2026-12-27", state=result1)
+        self.assertEqual(result2["iteration"], 2)
+
+    def test_clarification_node_signals_are_surfaced(self) -> None:
+        app = create_app(self.config)
+
+        def always_needs_clarification(state):
+            return {
+                "needs_clarification": True,
+                "clarification_prompt": "What are your travel dates?",
+                "status": "needs_clarification",
+            }
+
+        app.append_graph_part("check_completeness", always_needs_clarification)
+        payload = handle_invoke_request(
+            app,
+            {"type": "NEW", "user_query": "I want a trip somewhere nice", "mode": "mock"},
+        )
+
+        self.assertTrue(payload["needs_clarification"])
+        self.assertEqual(payload["clarification_prompt"], "What are your travel dates?")
+        self.assertTrue(payload["state"]["needs_clarification"])
+
+    def test_clarification_resets_on_each_run(self) -> None:
+        app = create_app(self.config)
+        call_count = {"n": 0}
+
+        def sometimes_needs_clarification(state):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return {"needs_clarification": True, "clarification_prompt": "Dates?"}
+            return {"needs_clarification": False, "clarification_prompt": None}
+
+        app.append_graph_part("check_completeness", sometimes_needs_clarification)
+
+        result1 = app.run("Trip somewhere", mode="mock")
+        self.assertTrue(result1["needs_clarification"])
+
+        result2 = app.run("Trip from 2026-12-20 to 2026-12-27", state=result1, mode="mock")
+        self.assertFalse(result2["needs_clarification"])
+        self.assertIsNone(result2["clarification_prompt"])
+        self.assertEqual(result2["iteration"], 2)
+
+    def test_clarification_type_carries_prior_state(self) -> None:
+        app = create_app(self.config)
+        result1 = handle_invoke_request(
+            app, {"type": "NEW", "user_query": "Alps ski trip", "mode": "mock"}
+        )
+        result2 = handle_invoke_request(
+            app,
+            {
+                "type": "CLARIFICATION",
+                "user_query": "Alps ski trip, Dec 20–27, budget 2500",
+                "mode": "mock",
+                "state": result1["state"],
+            },
+        )
+        self.assertEqual(result2["state"]["iteration"], 2)
+
+    def test_new_type_ignores_prior_state(self) -> None:
+        app = create_app(self.config)
+        result1 = handle_invoke_request(
+            app, {"type": "NEW", "user_query": "Alps ski trip", "mode": "mock"}
+        )
+        result2 = handle_invoke_request(
+            app,
+            {
+                "type": "NEW",
+                "user_query": "Beach trip to Spain",
+                "mode": "mock",
+                "state": result1["state"],
+            },
+        )
+        self.assertEqual(result2["state"]["iteration"], 1)
+
+    def test_invalid_type_raises_value_error(self) -> None:
+        app = create_app(self.config)
+        with self.assertRaises(ValueError):
+            handle_invoke_request(
+                app, {"type": "RETRY", "user_query": "Alps ski trip", "mode": "mock"}
+            )
+
+    def test_needs_clarification_absent_from_normal_api_response(self) -> None:
+        app = create_app(self.config)
+        payload = handle_invoke_request(
+            app,
+            {
+                "type": "NEW",
+                "user_query": "Alps ski trip from 2026-12-20 to 2026-12-27",
+                "mode": "mock",
+                "origin_iata": "VIE",
+                "destination_iata": "CMF",
+            },
+        )
+        self.assertNotIn("needs_clarification", payload)
+        self.assertIn("state", payload)
 
     def test_flight_chain_rejects_return_before_departure(self) -> None:
         app = create_app(self.config)
@@ -184,6 +308,263 @@ class CoreModuleTests(unittest.TestCase):
                     "outbound_date": "07-01-2026",
                 },
             )
+
+    def test_search_flights_uses_indicative_anywhere_without_destination(self) -> None:
+        class _Provider:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def search_roundtrip_chains(self, params):
+                raise AssertionError("roundtrip search should not run when destination_iata is missing")
+
+            async def search_indicative_anywhere(
+                self,
+                *,
+                origin_iata: str,
+                destination_iata=None,
+                outbound_date=None,
+                market: str = "UK",
+                locale: str = "en-GB",
+                currency: str = "EUR",
+            ):
+                return {
+                    "status": "RESULT_STATUS_COMPLETE",
+                    "quotes": [
+                        {
+                            "airports": {
+                                "origin": {"iata": origin_iata, "name": origin_iata},
+                                "destination": {"iata": "AGP", "name": "Malaga"},
+                            },
+                            "outbound_datetime": (
+                                f"{outbound_date}T00:00:00" if outbound_date else None
+                            ),
+                            "inbound_datetime": None,
+                            "price": {"amount": 89.0, "unit": "PRICE_UNIT_WHOLE"},
+                        }
+                    ],
+                }
+
+            async def close(self) -> None:
+                self.closed = True
+
+        provider = _Provider()
+        node = SearchFlightsNode(flight_service=FlightChainService(provider=provider))
+        result = node(
+            {
+                "origin_iata": "VIE",
+                "trip_intent": {"start_date": "2026-07-01"},
+            }
+        )
+
+        self.assertEqual(result["status"], "indicative_flights_ready")
+        self.assertEqual(result["next_step"], "select_destination")
+        self.assertFalse(result["needs_clarification"])
+        self.assertEqual(result["flight_results"][0]["airports"]["destination"]["iata"], "AGP")
+        self.assertTrue(provider.closed)
+
+    def test_search_flights_uses_anytime_indicative_without_destination_and_dates(self) -> None:
+        class _Provider:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def search_roundtrip_chains(self, params):
+                raise AssertionError("roundtrip search should not run when destination_iata is missing")
+
+            async def search_indicative_anywhere(
+                self,
+                *,
+                origin_iata: str,
+                destination_iata=None,
+                outbound_date=None,
+                market: str = "UK",
+                locale: str = "en-GB",
+                currency: str = "EUR",
+            ):
+                return {
+                    "status": "RESULT_STATUS_COMPLETE",
+                    "quotes": [
+                        {
+                            "airports": {
+                                "origin": {"iata": origin_iata, "name": origin_iata},
+                                "destination": {"iata": "PMI", "name": "Palma"},
+                            },
+                            "outbound_datetime": (
+                                f"{outbound_date}T00:00:00" if outbound_date else None
+                            ),
+                            "inbound_datetime": None,
+                            "price": {"amount": 120.0, "unit": "PRICE_UNIT_WHOLE"},
+                        }
+                    ],
+                }
+
+            async def close(self) -> None:
+                self.closed = True
+
+        provider = _Provider()
+        node = SearchFlightsNode(flight_service=FlightChainService(provider=provider))
+        result = node({"origin_iata": "VIE", "trip_intent": {}})
+
+        self.assertEqual(result["status"], "indicative_flights_ready")
+        self.assertEqual(result["next_step"], "select_destination")
+        self.assertFalse(result["needs_clarification"])
+        self.assertEqual(result["flight_results"][0]["airports"]["destination"]["iata"], "PMI")
+        self.assertTrue(provider.closed)
+
+    def test_search_flights_resolves_destination_from_places_and_defaults_origin_to_bcn(self) -> None:
+        class _Provider:
+            def __init__(self) -> None:
+                self.closed = False
+                self.last_params = None
+
+            async def resolve_iata_code(self, search_term: str, *, market: str = "UK", locale: str = "en-GB"):
+                del market, locale
+                if search_term == "Paris":
+                    return "CDG"
+                return None
+
+            async def search_roundtrip_chains(self, params):
+                self.last_params = params
+                leg_out = FlightLegChain(
+                    leg_id="leg-out",
+                    origin_iata=params.origin_iata,
+                    destination_iata=params.destination_iata,
+                    departure_at="2026-07-01T08:00:00",
+                    arrival_at="2026-07-01T10:00:00",
+                    duration_minutes=120,
+                    stop_count=0,
+                    segments=(
+                        FlightSegment(
+                            segment_id="seg-out",
+                            origin_iata=params.origin_iata,
+                            destination_iata=params.destination_iata,
+                            departure_at="2026-07-01T08:00:00",
+                            arrival_at="2026-07-01T10:00:00",
+                        ),
+                    ),
+                )
+                leg_in = FlightLegChain(
+                    leg_id="leg-in",
+                    origin_iata=params.destination_iata,
+                    destination_iata=params.origin_iata,
+                    departure_at="2026-07-05T18:00:00",
+                    arrival_at="2026-07-05T20:00:00",
+                    duration_minutes=120,
+                    stop_count=0,
+                    segments=(
+                        FlightSegment(
+                            segment_id="seg-in",
+                            origin_iata=params.destination_iata,
+                            destination_iata=params.origin_iata,
+                            departure_at="2026-07-05T18:00:00",
+                            arrival_at="2026-07-05T20:00:00",
+                        ),
+                    ),
+                )
+                return LivePricesPollResult(
+                    status="COMPLETE",
+                    completed=True,
+                    results=(
+                        RoundTripChainResult(
+                            itinerary_id="trip-1",
+                            outbound_chain=leg_out,
+                            inbound_chain=leg_in,
+                            price_amount=150.0,
+                            price_currency="EUR",
+                        ),
+                    ),
+                )
+
+            async def search_indicative_anywhere(self, **kwargs):
+                raise AssertionError("indicative search should not run when a place can be resolved")
+
+            async def close(self) -> None:
+                self.closed = True
+
+        provider = _Provider()
+        node = SearchFlightsNode(flight_service=FlightChainService(provider=provider))
+        result = node(
+            {
+                "trip_intent": {
+                    "places": ["Paris"],
+                    "start_date": "2026-07-01",
+                    "end_date": "2026-07-05",
+                }
+            }
+        )
+
+        self.assertEqual(result["status"], "flights_ready")
+        self.assertEqual(result["origin_iata"], "BCN")
+        self.assertEqual(result["destination_iata"], "CDG")
+        self.assertEqual(provider.last_params.origin_iata, "BCN")
+        self.assertEqual(provider.last_params.destination_iata, "CDG")
+        self.assertTrue(provider.closed)
+
+    def test_search_flights_uses_indicative_with_destination_when_dates_missing(self) -> None:
+        class _Provider:
+            def __init__(self) -> None:
+                self.closed = False
+                self.calls = []
+
+            async def resolve_iata_code(self, search_term: str, *, market: str = "UK", locale: str = "en-GB"):
+                del market, locale
+                if search_term == "Paris":
+                    return "CDG"
+                return search_term
+
+            async def search_roundtrip_chains(self, params):
+                raise AssertionError("roundtrip search should not run when dates are missing")
+
+            async def search_indicative_anywhere(
+                self,
+                *,
+                origin_iata: str,
+                destination_iata=None,
+                outbound_date=None,
+                market: str = "UK",
+                locale: str = "en-GB",
+                currency: str = "EUR",
+            ):
+                self.calls.append(
+                    {
+                        "origin_iata": origin_iata,
+                        "destination_iata": destination_iata,
+                        "outbound_date": outbound_date,
+                        "market": market,
+                        "locale": locale,
+                        "currency": currency,
+                    }
+                )
+                return {
+                    "status": "RESULT_STATUS_COMPLETE",
+                    "quotes": [
+                        {
+                            "airports": {
+                                "origin": {"iata": origin_iata, "name": origin_iata},
+                                "destination": {"iata": destination_iata, "name": destination_iata},
+                            },
+                            "outbound_datetime": (
+                                f"{outbound_date}T00:00:00" if outbound_date else None
+                            ),
+                            "inbound_datetime": None,
+                            "price": {"amount": 89.0, "unit": "PRICE_UNIT_WHOLE"},
+                        }
+                    ],
+                }
+
+            async def close(self) -> None:
+                self.closed = True
+
+        provider = _Provider()
+        node = SearchFlightsNode(flight_service=FlightChainService(provider=provider))
+        result = node({"trip_intent": {"places": ["Paris"]}})
+
+        self.assertEqual(result["status"], "indicative_flights_ready")
+        self.assertEqual(result["origin_iata"], "BCN")
+        self.assertEqual(result["destination_iata"], "CDG")
+        self.assertEqual(result["next_step"], "select_dates")
+        self.assertEqual(provider.calls[0]["destination_iata"], "CDG")
+        self.assertIsNone(provider.calls[0]["outbound_date"])
+        self.assertTrue(provider.closed)
 
 
 if __name__ == "__main__":

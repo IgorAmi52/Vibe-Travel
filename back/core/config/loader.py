@@ -18,9 +18,9 @@ class AppConfig:
     api_host: str = "127.0.0.1"
     api_port: int = 8080
     gemini_model: str = "gemini-2.5-flash-lite"
-    skyscanner_base_url: str = "https://skyscanner89.p.rapidapi.com"
+    skyscanner_base_url: str = "https://partners.api.skyscanner.net"
     skyscanner_api_key: str = ""
-    skyscanner_api_host: str = "skyscanner89.p.rapidapi.com"
+    skyscanner_api_host: str = ""
     skyscanner_timeout_seconds: float = 30.0
     skyscanner_max_retries: int = 3
     skyscanner_retry_delay_seconds: float = 1.0
@@ -33,9 +33,9 @@ def load_app_config() -> AppConfig:
     api_host = os.getenv("TRIP_PLANNER_API_HOST", "127.0.0.1").strip() or "127.0.0.1"
     api_port = _parse_port(os.getenv("TRIP_PLANNER_API_PORT"), 8080)
     gemini_model = os.getenv("TRIP_PLANNER_GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
-    skyscanner_base_url = os.getenv("SKYSCANNER_BASE_URL", "https://skyscanner89.p.rapidapi.com").strip()
+    skyscanner_base_url = os.getenv("SKYSCANNER_BASE_URL", "https://partners.api.skyscanner.net").strip()
     skyscanner_api_key = os.getenv("SKYSCANNER_API_KEY", "").strip()
-    skyscanner_api_host = os.getenv("SKYSCANNER_API_HOST", "skyscanner89.p.rapidapi.com").strip()
+    skyscanner_api_host = os.getenv("SKYSCANNER_API_HOST", "").strip()
     skyscanner_timeout_seconds = _parse_float(os.getenv("SKYSCANNER_TIMEOUT_SECONDS"), 30.0)
     skyscanner_max_retries = max(1, _parse_port(os.getenv("SKYSCANNER_MAX_RETRIES"), 3))
     skyscanner_retry_delay_seconds = _parse_float(os.getenv("SKYSCANNER_RETRY_DELAY_SECONDS"), 1.0)
@@ -46,9 +46,9 @@ def load_app_config() -> AppConfig:
         api_host=api_host,
         api_port=api_port,
         gemini_model=gemini_model or "gemini-2.5-flash-lite",
-        skyscanner_base_url=skyscanner_base_url or "https://skyscanner89.p.rapidapi.com",
+        skyscanner_base_url=skyscanner_base_url or "https://partners.api.skyscanner.net",
         skyscanner_api_key=skyscanner_api_key,
-        skyscanner_api_host=skyscanner_api_host or "skyscanner89.p.rapidapi.com",
+        skyscanner_api_host=skyscanner_api_host,
         skyscanner_timeout_seconds=skyscanner_timeout_seconds,
         skyscanner_max_retries=skyscanner_max_retries,
         skyscanner_retry_delay_seconds=skyscanner_retry_delay_seconds,
