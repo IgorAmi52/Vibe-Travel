@@ -37,7 +37,7 @@ def load_app_config() -> AppConfig:
     skyscanner_api_key = os.getenv("SKYSCANNER_API_KEY", "").strip()
     skyscanner_api_host = os.getenv("SKYSCANNER_API_HOST", "skyscanner89.p.rapidapi.com").strip()
     skyscanner_timeout_seconds = _parse_float(os.getenv("SKYSCANNER_TIMEOUT_SECONDS"), 30.0)
-    skyscanner_max_retries = _parse_port(os.getenv("SKYSCANNER_MAX_RETRIES"), 3)
+    skyscanner_max_retries = max(1, _parse_port(os.getenv("SKYSCANNER_MAX_RETRIES"), 3))
     skyscanner_retry_delay_seconds = _parse_float(os.getenv("SKYSCANNER_RETRY_DELAY_SECONDS"), 1.0)
 
     return AppConfig(

@@ -122,6 +122,8 @@ def handle_flight_chain_request(app: TripPlannerApp, payload: Dict[str, Any]) ->
     destination_iata = _required_non_empty_string(payload, "destination_iata")
     departure_date = _required_date(payload, "departure_date")
     return_date = _required_date(payload, "return_date")
+    if return_date < departure_date:
+        raise ValueError("return_date must be on or after departure_date")
     market = str(payload.get("market", "UK"))
     locale = str(payload.get("locale", "en-GB"))
     currency = str(payload.get("currency", "EUR"))
