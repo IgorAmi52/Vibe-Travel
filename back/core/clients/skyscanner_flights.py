@@ -15,8 +15,16 @@ from core.flights import (
 
 
 class SkyscannerFlightClient:
-    CREATE_SESSION_PATH = "/v3/flights/live/search/create"
-    POLL_SESSION_PATH = "/v3/flights/live/search/poll"
+    CREATE_SESSION_PATHS = (
+        "/api/v1/flights/live/search/create",
+        "/v1/flights/live/search/create",
+        "/v3/flights/live/search/create",
+    )
+    POLL_SESSION_PATHS = (
+        "/api/v1/flights/live/search/poll",
+        "/v1/flights/live/search/poll",
+        "/v3/flights/live/search/poll",
+    )
 
     def __init__(
         self,
@@ -42,8 +50,10 @@ class SkyscannerFlightClient:
         )
 
     async def create_live_prices_session(self, params: FlightSearchParams) -> LivePricesSession:
-        response = await self._connector.post(self.CREATE_SESSION_PATH, json=self._build_live_prices_payload(params))
-        payload = response.json()
+        payload = await self._post_with_path_fallback(
+            self.CREATE_SESSION_PATHS,
+            json=self._build_live_prices_payload(params),
+        )
 
         session_token = (
             payload.get("sessionToken")
@@ -66,8 +76,11 @@ class SkyscannerFlightClient:
         )
 
     async def poll_live_prices_session(self, session: LivePricesSession) -> LivePricesPollResult:
-        response = await self._connector.post(self.POLL_SESSION_PATH, json={"sessionToken": session.session_token})
-        return self._parse_poll_payload(response.json())
+        payload = await self._post_with_path_fallback(
+            self.POLL_SESSION_PATHS,
+            json={"sessionToken": session.session_token},
+        )
+        return self._parse_poll_payload(payload)
 
     async def search_roundtrip_chains(
         self,
@@ -92,6 +105,24 @@ class SkyscannerFlightClient:
 
     async def close(self) -> None:
         await self._connector.close()
+
+    async def _post_with_path_fallback(self, paths: tuple[str, ...], **kwargs: Any) -> dict[str, Any]:
+        from httpx import HTTPStatusError
+
+        last_error: Exception | None = None
+        for path in paths:
+            try:
+                response = await self._connector.post(path, **kwargs)
+                return response.json()
+            except HTTPStatusError as exc:
+                last_error = exc
+                if exc.response.status_code == 404:
+                    continue
+                raise
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Skyscanner request failed without response")
 
     @staticmethod
     def _build_live_prices_payload(params: FlightSearchParams) -> dict[str, Any]:
