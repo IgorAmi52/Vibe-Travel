@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.api import handle_flight_chain_request, handle_invoke_request
+from core.api import handle_flight_chain_request, handle_flight_indicative_request, handle_invoke_request
 from core.app import create_app
 from clients.gemini import GeminiIntentClient
 from core.config import DEFAULT_PROMPT_PATH, AppConfig, load_app_config, load_env_file, load_markdown_prompt
@@ -172,6 +172,18 @@ class CoreModuleTests(unittest.TestCase):
         with patch.dict(os.environ, {"SKYSCANNER_MAX_RETRIES": "0"}, clear=True):
             config = load_app_config()
             self.assertEqual(config.skyscanner_max_retries, 1)
+
+    def test_flight_indicative_requires_valid_outbound_date(self) -> None:
+        app = create_app(self.config)
+
+        with self.assertRaisesRegex(ValueError, "outbound_date must be ISO format YYYY-MM-DD"):
+            handle_flight_indicative_request(
+                app,
+                {
+                    "origin_iata": "VIE",
+                    "outbound_date": "07-01-2026",
+                },
+            )
 
 
 if __name__ == "__main__":

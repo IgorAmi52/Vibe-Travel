@@ -39,6 +39,18 @@ class TripPlannerApiHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         route = urlparse(self.path).path
+        if route == "/flights/indicative":
+            try:
+                payload = self._read_json_body()
+                self._send_json(200, handle_flight_indicative_request(self.server.app, payload))
+            except KeyError as exc:
+                self._send_json(400, {"error": f"Missing required field: {exc.args[0]}"})
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+
         if route == "/flights/chains":
             try:
                 payload = self._read_json_body()
@@ -163,6 +175,40 @@ def handle_flight_chain_request(app: TripPlannerApp, payload: Dict[str, Any]) ->
             service = FlightChainService(provider=client)
             results = await service.get_roundtrip_chains(params, limit=limit)
             return {"results": [_result_to_dict(item) for item in results]}
+        finally:
+            await client.close()
+
+    return asyncio.run(_run())
+
+
+def handle_flight_indicative_request(app: TripPlannerApp, payload: Dict[str, Any]) -> Dict[str, Any]:
+    origin_iata = _required_non_empty_string(payload, "origin_iata").upper()
+    outbound_date = _required_non_empty_string(payload, "outbound_date")
+    _required_date(payload, "outbound_date")
+    market = str(payload.get("market", "UK"))
+    locale = str(payload.get("locale", "en-GB"))
+    currency = str(payload.get("currency", "EUR"))
+
+    if not app.config.skyscanner_api_key:
+        raise ValueError("SKYSCANNER_API_KEY is required for /flights/indicative")
+
+    async def _run() -> Dict[str, Any]:
+        client = SkyscannerFlightClient(
+            base_url=app.config.skyscanner_base_url,
+            api_key=app.config.skyscanner_api_key,
+            api_host=app.config.skyscanner_api_host,
+            timeout=app.config.skyscanner_timeout_seconds,
+            max_retries=app.config.skyscanner_max_retries,
+            retry_delay=app.config.skyscanner_retry_delay_seconds,
+        )
+        try:
+            return await client.search_indicative_anywhere(
+                origin_iata=origin_iata,
+                outbound_date=outbound_date,
+                market=market,
+                locale=locale,
+                currency=currency,
+            )
         finally:
             await client.close()
 
