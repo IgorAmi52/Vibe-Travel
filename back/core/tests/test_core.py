@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.api import handle_invoke_request
+from core.api import handle_flight_chain_request, handle_invoke_request
 from core.app import create_app
 from clients.gemini import GeminiIntentClient
 from core.config import DEFAULT_PROMPT_PATH, AppConfig, load_app_config, load_env_file, load_markdown_prompt
@@ -153,6 +153,25 @@ class CoreModuleTests(unittest.TestCase):
 
         self.assertEqual(payload["state"]["trip_intent"]["places"], ["Val d'Isere"])
         self.assertEqual(payload["state"]["status"], "intent_ready")
+
+    def test_flight_chain_rejects_return_before_departure(self) -> None:
+        app = create_app(self.config)
+
+        with self.assertRaisesRegex(ValueError, "return_date must be on or after departure_date"):
+            handle_flight_chain_request(
+                app,
+                {
+                    "origin_iata": "VIE",
+                    "destination_iata": "LON",
+                    "departure_date": "2026-06-20",
+                    "return_date": "2026-06-10",
+                },
+            )
+
+    def test_config_clamps_skyscanner_max_retries_to_minimum_one(self) -> None:
+        with patch.dict(os.environ, {"SKYSCANNER_MAX_RETRIES": "0"}, clear=True):
+            config = load_app_config()
+            self.assertEqual(config.skyscanner_max_retries, 1)
 
 
 if __name__ == "__main__":
