@@ -1,3 +1,5 @@
+from core.api.embed_provider import EmbedProvider
+from core.api.hotel_api_client import HotelApiClient
 from .server import (
     create_http_server,
     handle_flight_chain_request,

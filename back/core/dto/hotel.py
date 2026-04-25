@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from back.core.models.hotel import ScoredHotel
+from core.models.hotel import ScoredHotel
 
 
 class HotelRankingRequest(BaseModel):

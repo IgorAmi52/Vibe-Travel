@@ -3,9 +3,9 @@ from typing import Any
 
 from httpx import HTTPStatusError
 
-from back.clients.api_connector import ApiConnector
-from back.core.api.hotel_api_client import HotelApiClient
-from back.core.models.hotel import Destination, GeoCoordinates
+from clients.api_connector import ApiConnector
+from core.api.hotel_api_client import HotelApiClient
+from core.models.hotel import Destination, GeoCoordinates
 
 logger = logging.getLogger(__name__)
 

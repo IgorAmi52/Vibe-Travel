@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from back.core.models.hotel import Destination
+from core.models.hotel import Destination
 
 
 class HotelApiClient(ABC):
