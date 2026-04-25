@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_VIBE_WEIGHT = 0.6
 DEFAULT_PRICE_WEIGHT = 0.2
 DEFAULT_RATING_WEIGHT = 0.2
-MAX_REVIEWS_TO_FETCH = 10
+MAX_REVIEWS_TO_FETCH = 5
 
 
 class HotelRankingService:
