@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 :root {
-  --background: #f5f5f5;
-  --foreground: #171717;
+  --background: #ebecee;
+  --foreground: #071d3d;
   --ss-navy: #071d3d;
   --ss-navy-light: #0f2f52;
   --ss-accent: #0062e3;
@@ -18,7 +18,7 @@ body {
 @keyframes sparkle-pulse {
   0%,
   100% {
-    opacity: 0.65;
+    opacity: 0.72;
     transform: scale(1);
   }
   50% {
@@ -28,7 +28,7 @@ body {
 }
 
 .animate-sparkle-pulse {
-  animation: sparkle-pulse 1.75s ease-in-out infinite;
+  animation: sparkle-pulse 1.6s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,11 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  refineSession,
-  removeIntentChip,
-  startSession,
-} from "@/lib/sessionClient";
+import { refineSession, startSession } from "@/lib/sessionClient";
 import type { PackageCardViewModel, SessionSnapshot } from "@/lib/types";
 import { AppChrome } from "./AppChrome";
 import { ResultsLayout } from "./ResultsLayout";
@@ -22,15 +18,11 @@ function applySnapshot(
   setters: {
     setSessionId: (id: string) => void;
     setDisplayTheme: (s: string) => void;
-    setTripFactsLine: (s: string) => void;
-    setIntentChips: (c: string[]) => void;
     setPackages: (p: PackageCardViewModel[]) => void;
   },
 ) {
   setters.setSessionId(snap.sessionId);
   setters.setDisplayTheme(snap.displayTheme);
-  setters.setTripFactsLine(snap.tripFactsLine);
-  setters.setIntentChips(snap.intentChips);
   setters.setPackages(snap.packages);
 }
 
@@ -39,10 +31,6 @@ export function PackagesExperience() {
   const [displayTheme, setDisplayTheme] = useState(
     "Discover flight + hotel packages matched to your vibe",
   );
-  const [tripFactsLine, setTripFactsLine] = useState(
-    "Use natural language — we’ll show indicative flight + stay bundles",
-  );
-  const [intentChips, setIntentChips] = useState<string[]>([]);
   const [packages, setPackages] = useState<PackageCardViewModel[]>([]);
   const [refineInput, setRefineInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -59,8 +47,6 @@ export function PackagesExperience() {
   const setters = {
     setSessionId,
     setDisplayTheme,
-    setTripFactsLine,
-    setIntentChips,
     setPackages,
   };
 
@@ -83,30 +69,15 @@ export function PackagesExperience() {
     }
   }
 
-  async function handleRemoveChip(chip: string) {
-    if (!sessionId || loading) return;
-    setLoading(true);
-    setStatusIdx(0);
-    try {
-      const snap = await removeIntentChip(sessionId, chip);
-      applySnapshot(snap, setters);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   const refinePlaceholder = sessionId
     ? "Refine your search…"
     : "Describe your trip…";
 
   return (
-    <div className="min-h-screen bg-neutral-100 font-sans text-neutral-900">
+    <div className="min-h-screen bg-ss-page font-sans text-slate-900">
       <AppChrome />
       <SearchSummaryBar
         displayTheme={displayTheme}
-        tripFactsLine={tripFactsLine}
-        intentChips={intentChips}
-        onRemoveChip={handleRemoveChip}
         refinePlaceholder={refinePlaceholder}
         refineValue={refineInput}
         onRefineChange={setRefineInput}
