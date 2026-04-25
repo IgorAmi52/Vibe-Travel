@@ -1,5 +1,7 @@
 "use client";
 
+import { formatMoney } from "@/lib/formatMoney";
+
 function Chevron(props: { className?: string }) {
   return (
     <svg
@@ -66,21 +68,23 @@ function PriceRangeVisual() {
   return (
     <div className="relative mt-1 h-9 w-full">
       <div className="absolute left-0 right-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-slate-200">
-        <div className="absolute inset-y-0 left-[8%] right-[12%] rounded-full bg-ss-accent" />
+        <div className="absolute inset-y-0 left-0 right-0 rounded-full bg-ss-accent" />
       </div>
       <div
-        className="absolute top-1/2 z-10 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-ss-accent shadow-md"
-        style={{ left: "8%" }}
+        className="absolute left-0 top-1/2 z-10 h-5 w-5 -translate-y-1/2 rounded-full border-[3px] border-white bg-ss-accent shadow-md"
         aria-hidden
       />
       <div
-        className="absolute top-1/2 z-10 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-ss-accent shadow-md"
-        style={{ left: "88%" }}
+        className="absolute right-0 top-1/2 z-10 h-5 w-5 -translate-y-1/2 rounded-full border-[3px] border-white bg-ss-accent shadow-md"
         aria-hidden
       />
     </div>
   );
 }
+
+const PRICE_MIN = 7800;
+const PRICE_MAX = 19700;
+const PRICE_CURRENCY = "EUR";
 
 const reviewOptions: { label: string; count: number }[] = [
   { label: "5.0 Outstanding", count: 1 },
@@ -103,8 +107,8 @@ export function FilterSidebar() {
         </summary>
         <div className="space-y-3 px-4 pb-4">
           <div className="flex justify-between text-sm font-semibold tabular-nums text-slate-900">
-            <span>7,812 €</span>
-            <span>19,639 €</span>
+            <span>{formatMoney(PRICE_MIN, PRICE_CURRENCY)}</span>
+            <span>{formatMoney(PRICE_MAX, PRICE_CURRENCY)}</span>
           </div>
           <PriceRangeVisual />
         </div>

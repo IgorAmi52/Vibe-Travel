@@ -1,22 +1,11 @@
 import Image from "next/image";
+import { formatMoney } from "@/lib/formatMoney";
 import type { PackageCardViewModel } from "@/lib/types";
 
 type PackageCardProps = {
   pkg: PackageCardViewModel;
   rankLabel?: string;
 };
-
-function formatMoney(n: number, currency: string) {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 0,
-    }).format(n);
-  } catch {
-    return `${n} ${currency}`;
-  }
-}
 
 export function PackageCard({ pkg, rankLabel }: PackageCardProps) {
   const { flight, accommodation, tags } = pkg;
