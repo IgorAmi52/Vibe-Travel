@@ -32,6 +32,8 @@ class SearchHotelsNode:
 
         check_in_raw = _normalize_string(intent.get("start_date"))
         check_out_raw = _normalize_string(intent.get("end_date"))
+        if not check_in_raw or not check_out_raw:
+            check_in_raw, check_out_raw = _fallback_dates_from_flights(state.get("flight_results") or [])
         if not destination or not check_in_raw or not check_out_raw:
             return _noop_update(state)
 
@@ -155,6 +157,24 @@ def _normalize_string(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _fallback_dates_from_flights(flight_results: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    if not flight_results:
+        return None, None
+
+    first_flight = flight_results[0]
+    outbound = _normalize_string(first_flight.get("outbound_datetime"))
+    inbound = _normalize_string(first_flight.get("inbound_datetime"))
+    return _extract_iso_date(outbound), _extract_iso_date(inbound)
+
+
+def _extract_iso_date(datetime_value: str | None) -> str | None:
+    if not datetime_value:
+        return None
+    if "T" in datetime_value:
+        return datetime_value.split("T", 1)[0]
+    return datetime_value[:10] if len(datetime_value) >= 10 else None
 
 
 def _noop_update(state: TripPlannerGraphState) -> Dict[str, Any]:

@@ -96,6 +96,7 @@ class TripPlannerState:
     source: str = "network"
     status: str = "received"
     trip_intent: Optional[IntentStruct] = None
+    budget: Optional[int] = None
     origin_iata: Optional[str] = None
     destination_place: Optional[str] = None
     destination_iata: Optional[str] = None
@@ -123,6 +124,7 @@ class TripPlannerState:
             source=payload.get("source", "network"),
             status=payload.get("status", "received"),
             trip_intent=IntentStruct.from_dict(trip_intent) if trip_intent else None,
+            budget=payload.get("budget"),
             origin_iata=payload.get("origin_iata"),
             destination_place=payload.get("destination_place"),
             destination_iata=payload.get("destination_iata"),
@@ -147,6 +149,7 @@ class TripPlannerGraphState(TypedDict, total=False):
     source: str
     status: str
     trip_intent: Dict[str, Any]
+    budget: Optional[int]
     origin_iata: Optional[str]
     destination_place: Optional[str]
     destination_iata: Optional[str]

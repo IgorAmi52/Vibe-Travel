@@ -17,7 +17,10 @@ from core.flights import (
     RoundTripChainResult,
 )
 from core.graph import LANGGRAPH_AVAILABLE
+from core.nodes.group_results import GroupResultsNode
 from core.nodes.search_flights import SearchFlightsNode
+from core.nodes.search_hotels import SearchHotelsNode
+from core.models.hotel import Hotel, ScoredHotel
 from core.state import TripPlannerState, create_initial_state
 
 
@@ -660,6 +663,113 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(provider.calls[0]["destination_iata"], "ZRH")
         self.assertTrue(provider.closed)
 
+    def test_search_hotels_falls_back_to_flight_dates_when_intent_dates_missing(self) -> None:
+        class _HotelService:
+            def __init__(self) -> None:
+                self.calls = []
+                self.closed = False
+
+            async def rank_hotels(self, *, vibe_query, destination, check_in, check_out, currency="USD"):
+                self.calls.append(
+                    {
+                        "vibe_query": vibe_query,
+                        "destination": destination,
+                        "check_in": check_in.isoformat(),
+                        "check_out": check_out.isoformat(),
+                        "currency": currency,
+                    }
+                )
+                return [
+                    ScoredHotel(
+                        hotel=Hotel(
+                            hotel_id="h-1",
+                            name="Paris Spa Retreat",
+                            price=320.0,
+                            currency="USD",
+                            description="Spa hotel",
+                            amenities=["spa"],
+                            guest_rating=9.1,
+                        ),
+                        vibe_similarity=0.9,
+                        price_score=0.7,
+                        guest_rating_score=0.91,
+                        composite_score=0.85,
+                    )
+                ]
+
+            async def close(self) -> None:
+                self.closed = True
+
+        hotel_service = _HotelService()
+        node = SearchHotelsNode(hotel_ranking_service_factory=lambda: hotel_service)
+        result = node(
+            {
+                "status": "flights_ready",
+                "user_query": "Paris with a great spa",
+                "destination_place": "Paris",
+                "trip_intent": {
+                    "places": ["Paris"],
+                    "vibe": "spa center",
+                },
+                "flight_results": [
+                    {
+                        "outbound_datetime": "2026-08-10T09:00:00",
+                        "inbound_datetime": "2026-08-14T18:00:00",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(result["status"], "hotels_ranked")
+        self.assertEqual(result["next_step"], "group_results")
+        self.assertEqual(hotel_service.calls[0]["check_in"], "2026-08-10")
+        self.assertEqual(hotel_service.calls[0]["check_out"], "2026-08-14")
+        self.assertEqual(result["hotel_results"][0]["name"], "Paris Spa Retreat")
+        self.assertTrue(hotel_service.closed)
+
+    def test_group_results_filters_final_offers_by_budget(self) -> None:
+        node = GroupResultsNode(flight_limit=2, hotel_limit=2, option_limit=4)
+        result = node(
+            {
+                "budget": 300,
+                "destination_place": "Paris",
+                "destination_iata": "CDG",
+                "flight_results": [
+                    {"price": {"amount": 120.0, "unit": "EUR"}},
+                    {"price": {"amount": 220.0, "unit": "EUR"}},
+                ],
+                "hotel_results": [
+                    {"name": "Budget Stay", "price": {"amount": 150.0, "currency": "EUR"}, "scores": {"composite_score": 0.7}},
+                    {"name": "Luxury Stay", "price": {"amount": 260.0, "currency": "EUR"}, "scores": {"composite_score": 0.9}},
+                ],
+            }
+        )
+
+        self.assertEqual(result["status"], "travel_options_ready")
+        self.assertEqual(len(result["grouped_results"]), 1)
+        self.assertEqual(result["flight_results"], [])
+        self.assertEqual(result["hotel_results"], [])
+        self.assertEqual(result["grouped_results"][0]["hotel"]["name"], "Budget Stay")
+        self.assertTrue(result["grouped_results"][0]["within_budget"])
+        self.assertEqual(result["grouped_results"][0]["price_summary"]["total_amount"], 270.0)
+
+    def test_group_results_returns_clarification_when_budget_cannot_be_met(self) -> None:
+        node = GroupResultsNode()
+        result = node(
+            {
+                "budget": 200,
+                "flight_results": [{"price": {"amount": 180.0, "unit": "EUR"}}],
+                "hotel_results": [{"name": "Hotel", "price": {"amount": 150.0, "currency": "EUR"}, "scores": {"composite_score": 0.8}}],
+            }
+        )
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["next_step"], "group_results")
+        self.assertTrue(result["needs_clarification"])
+        self.assertEqual(result["flight_results"], [])
+        self.assertEqual(result["hotel_results"], [])
+        self.assertEqual(result["grouped_results"], [])
+
     @unittest.skipUnless(
         os.environ.get("BOOKING_RAPIDAPI_KEY") and os.environ.get("GEMINI_API_KEY"),
         "Real hotel ranking test requires BOOKING_RAPIDAPI_KEY and GEMINI_API_KEY",
@@ -681,7 +791,8 @@ class CoreModuleTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "travel_options_ready")
         self.assertEqual(result["destination_place"], "Paris")
-        self.assertGreater(len(result["hotel_results"]), 0)
+        self.assertEqual(result["flight_results"], [])
+        self.assertEqual(result["hotel_results"], [])
         self.assertGreater(len(result["grouped_results"]), 0)
         self.assertIn("hotel", result["grouped_results"][0])
         self.assertIn("flight", result["grouped_results"][0])

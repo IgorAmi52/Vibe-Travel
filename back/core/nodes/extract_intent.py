@@ -23,6 +23,7 @@ class ExtractIntentNode:
         trip_intent = IntentStruct.from_dict(merged_payload)
         return {
             "trip_intent": trip_intent.to_dict(),
+            "budget": trip_intent.budget,
             "status": "intent_ready",
             "next_step": "search_flights",
         }

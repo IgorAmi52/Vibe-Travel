@@ -276,6 +276,8 @@ def _merge_request_state(state: Dict[str, Any], payload: Dict[str, Any]) -> None
 
     if payload.get("person_count") is not None:
         state["person_count"] = int(payload["person_count"])
+    if payload.get("budget") is not None:
+        state["budget"] = int(payload["budget"])
 
     explicit_trip_intent = dict(state.get("trip_intent") or {})
     if isinstance(payload.get("trip_intent"), dict):
