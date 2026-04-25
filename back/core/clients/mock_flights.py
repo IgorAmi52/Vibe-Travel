@@ -123,6 +123,7 @@ class SyntheticFlightClient(FlightProvider):
         origin_iata: str,
         destination_iata: str | None = None,
         outbound_date: str | None = None,
+        return_date: str | None = None,
         market: str = "UK",
         locale: str = "en-GB",
         currency: str = "EUR",
@@ -131,20 +132,24 @@ class SyntheticFlightClient(FlightProvider):
         primary_destination = destination_iata or "PMI"
         quotes = [
             {
-                "quote_id": f"{origin_iata or 'UNK'}-{primary_destination}-1",
-                "origin": {"iata": origin_iata},
-                "destination": {"iata": primary_destination, "name": primary_destination},
-                "outbound_date": outbound_date,
-                "price_amount": 120.0,
-                "price_currency": currency,
+                "airports": {
+                    "origin": {"iata": origin_iata, "name": origin_iata},
+                    "destination": {"iata": primary_destination, "name": primary_destination},
+                },
+                "outbound_datetime": f"{outbound_date}T00:00:00" if outbound_date else None,
+                "inbound_datetime": f"{return_date}T00:00:00" if return_date else None,
+                "price": {"amount": 120.0, "unit": currency},
+                "is_direct": True,
             },
             {
-                "quote_id": f"{origin_iata or 'UNK'}-AGP-2",
-                "origin": {"iata": origin_iata},
-                "destination": {"iata": "AGP", "name": "Malaga"},
-                "outbound_date": outbound_date,
-                "price_amount": 135.0,
-                "price_currency": currency,
+                "airports": {
+                    "origin": {"iata": origin_iata, "name": origin_iata},
+                    "destination": {"iata": "AGP", "name": "Malaga"},
+                },
+                "outbound_datetime": f"{outbound_date}T00:00:00" if outbound_date else None,
+                "inbound_datetime": f"{return_date}T00:00:00" if return_date else None,
+                "price": {"amount": 135.0, "unit": currency},
+                "is_direct": True,
             },
         ]
         return {
