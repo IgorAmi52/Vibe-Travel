@@ -39,6 +39,9 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(state.next_step, "extract_intent")
         self.assertEqual(state.errors, [])
         self.assertIsNone(state.trip_intent)
+        self.assertFalse(state.needs_clarification)
+        self.assertIsNone(state.clarification_prompt)
+        self.assertEqual(state.iteration, 0)
 
     def test_prompt_loader_reads_markdown_prompt(self) -> None:
         prompt = load_markdown_prompt(DEFAULT_PROMPT_PATH)
@@ -69,6 +72,9 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(result.trip_intent.places, ["Chamonix", "Zermatt"])
         self.assertEqual(result.trip_intent.countries, ["France", "Switzerland"])
         self.assertEqual(result.trip_intent.budget, 2400)
+        self.assertFalse(result.needs_clarification)
+        self.assertIsNone(result.clarification_prompt)
+        self.assertEqual(result.iteration, 1)
 
     def test_app_can_append_more_graph_parts(self) -> None:
         app = create_app(self.config)
@@ -138,6 +144,7 @@ class CoreModuleTests(unittest.TestCase):
         payload = handle_invoke_request(
             app,
             {
+                "type": "NEW",
                 "user_query": "Plan an Alps ski trip",
                 "mode": "mock",
                 "mock_response": {
@@ -153,6 +160,102 @@ class CoreModuleTests(unittest.TestCase):
 
         self.assertEqual(payload["state"]["trip_intent"]["places"], ["Val d'Isere"])
         self.assertEqual(payload["state"]["status"], "intent_ready")
+        self.assertNotIn("needs_clarification", payload)
+
+    def test_iteration_increments_across_turns(self) -> None:
+        app = create_app(self.config)
+        result1 = app.run("I want an Alps ski trip")
+        self.assertEqual(result1["iteration"], 1)
+
+        result2 = app.run("From 2026-12-20 to 2026-12-27", state=result1)
+        self.assertEqual(result2["iteration"], 2)
+
+    def test_clarification_node_signals_are_surfaced(self) -> None:
+        app = create_app(self.config)
+
+        def always_needs_clarification(state):
+            return {
+                "needs_clarification": True,
+                "clarification_prompt": "What are your travel dates?",
+                "status": "needs_clarification",
+            }
+
+        app.append_graph_part("check_completeness", always_needs_clarification)
+        payload = handle_invoke_request(
+            app,
+            {"type": "NEW", "user_query": "I want a trip somewhere nice", "mode": "mock"},
+        )
+
+        self.assertTrue(payload["needs_clarification"])
+        self.assertEqual(payload["clarification_prompt"], "What are your travel dates?")
+        self.assertTrue(payload["state"]["needs_clarification"])
+
+    def test_clarification_resets_on_each_run(self) -> None:
+        app = create_app(self.config)
+        call_count = {"n": 0}
+
+        def sometimes_needs_clarification(state):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return {"needs_clarification": True, "clarification_prompt": "Dates?"}
+            return {"needs_clarification": False, "clarification_prompt": None}
+
+        app.append_graph_part("check_completeness", sometimes_needs_clarification)
+
+        result1 = app.run("Trip somewhere", mode="mock")
+        self.assertTrue(result1["needs_clarification"])
+
+        result2 = app.run("Trip from 2026-12-20 to 2026-12-27", state=result1, mode="mock")
+        self.assertFalse(result2["needs_clarification"])
+        self.assertIsNone(result2["clarification_prompt"])
+        self.assertEqual(result2["iteration"], 2)
+
+    def test_clarification_type_carries_prior_state(self) -> None:
+        app = create_app(self.config)
+        result1 = handle_invoke_request(
+            app, {"type": "NEW", "user_query": "Alps ski trip", "mode": "mock"}
+        )
+        result2 = handle_invoke_request(
+            app,
+            {
+                "type": "CLARIFICATION",
+                "user_query": "Alps ski trip, Dec 20–27, budget 2500",
+                "mode": "mock",
+                "state": result1["state"],
+            },
+        )
+        self.assertEqual(result2["state"]["iteration"], 2)
+
+    def test_new_type_ignores_prior_state(self) -> None:
+        app = create_app(self.config)
+        result1 = handle_invoke_request(
+            app, {"type": "NEW", "user_query": "Alps ski trip", "mode": "mock"}
+        )
+        result2 = handle_invoke_request(
+            app,
+            {
+                "type": "NEW",
+                "user_query": "Beach trip to Spain",
+                "mode": "mock",
+                "state": result1["state"],
+            },
+        )
+        self.assertEqual(result2["state"]["iteration"], 1)
+
+    def test_invalid_type_raises_value_error(self) -> None:
+        app = create_app(self.config)
+        with self.assertRaises(ValueError):
+            handle_invoke_request(
+                app, {"type": "RETRY", "user_query": "Alps ski trip", "mode": "mock"}
+            )
+
+    def test_needs_clarification_absent_from_normal_api_response(self) -> None:
+        app = create_app(self.config)
+        payload = handle_invoke_request(
+            app, {"type": "NEW", "user_query": "Alps ski trip", "mode": "mock"}
+        )
+        self.assertNotIn("needs_clarification", payload)
+        self.assertIn("state", payload)
 
     def test_flight_chain_rejects_return_before_departure(self) -> None:
         app = create_app(self.config)

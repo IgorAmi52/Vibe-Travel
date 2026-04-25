@@ -98,6 +98,9 @@ class TripPlannerState:
     trip_intent: Optional[IntentStruct] = None
     next_step: Optional[str] = "extract_intent"
     errors: List[str] = field(default_factory=list)
+    needs_clarification: bool = False
+    clarification_prompt: Optional[str] = None
+    iteration: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -115,6 +118,9 @@ class TripPlannerState:
             trip_intent=IntentStruct.from_dict(trip_intent) if trip_intent else None,
             next_step=payload.get("next_step", "extract_intent"),
             errors=list(payload.get("errors") or []),
+            needs_clarification=bool(payload.get("needs_clarification", False)),
+            clarification_prompt=payload.get("clarification_prompt"),
+            iteration=int(payload.get("iteration", 0)),
         )
 
 
@@ -129,6 +135,9 @@ class TripPlannerGraphState(TypedDict, total=False):
     trip_intent: Dict[str, Any]
     next_step: Optional[str]
     errors: List[str]
+    needs_clarification: bool
+    clarification_prompt: Optional[str]
+    iteration: int
 
 
 def _clean_string_list(values: List[str]) -> List[str]:

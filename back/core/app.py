@@ -37,6 +37,9 @@ class TripPlannerApp:
         initial_state = dict(state or create_initial_state(user_query=user_query, source=source))
         initial_state["user_query"] = user_query
         initial_state.setdefault("source", source)
+        initial_state["iteration"] = int(initial_state.get("iteration", 0)) + 1
+        initial_state["needs_clarification"] = False
+        initial_state["clarification_prompt"] = None
         return graph.invoke(initial_state)
 
     def _build_graph(self, inference_client: IntentInferenceClient) -> TripPlannerGraphBuilder:
