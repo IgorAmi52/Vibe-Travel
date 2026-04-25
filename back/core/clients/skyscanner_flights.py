@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import re
+from dataclasses import replace
 from typing import Any
 
 from clients.api_connector import ApiConnector
@@ -13,24 +17,14 @@ from core.flights import (
     RoundTripChainResult,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class SkyscannerFlightClient:
-    CREATE_SESSION_PATHS = (
-        "/api/v1/flights/live/search/create",
-        "/v1/flights/live/search/create",
-        "/v3/flights/live/search/create",
-    )
-    POLL_SESSION_PATHS = (
-        "/api/v1/flights/live/search/poll",
-        "/v1/flights/live/search/poll",
-        "/v3/flights/live/search/poll",
-    )
-    INDICATIVE_SEARCH_PATHS = (
-        "/api/v1/flights/indicative/search",
-        "/v1/flights/indicative/search",
-        "/apiservices/v3/flights/indicative/search",
-        "/v3/flights/indicative/search",
-    )
+    AUTOSUGGEST_FLIGHTS_PATH = "/apiservices/v3/autosuggest/flights"
+    CREATE_SESSION_PATH = "/apiservices/v3/flights/live/search/create"
+    POLL_SESSION_PATH_TEMPLATE = "/apiservices/v3/flights/live/search/poll/{session_token}"
+    INDICATIVE_SEARCH_PATH = "/apiservices/v3/flights/indicative/search"
 
     def __init__(
         self,
@@ -43,23 +37,53 @@ class SkyscannerFlightClient:
         retry_delay: float = 1.0,
         connector: ApiConnector | None = None,
     ) -> None:
+        self._base_url = base_url
+        self._api_key = api_key
+        self._api_host = api_host
         self._connector = connector or ApiConnector(
             base_url=base_url,
-            headers={
-                "x-rapidapi-key": api_key,
-                "x-rapidapi-host": api_host,
-                "content-type": "application/json",
-            },
+            headers=self._build_headers(base_url=base_url, api_key=api_key, api_host=api_host),
             timeout=timeout,
             max_retries=max_retries,
             retry_delay=retry_delay,
         )
 
-    async def create_live_prices_session(self, params: FlightSearchParams) -> LivePricesSession:
-        payload = await self._post_with_path_fallback(
-            self.CREATE_SESSION_PATHS,
-            json=self._build_live_prices_payload(params),
+    async def resolve_iata_code(
+        self,
+        search_term: str,
+        *,
+        market: str = "UK",
+        locale: str = "en-GB",
+    ) -> str | None:
+        normalized = search_term.strip()
+        if not normalized:
+            return None
+        if _looks_like_iata(normalized):
+            return normalized.upper()
+
+        payload = await self._post_json(
+            self.AUTOSUGGEST_FLIGHTS_PATH,
+            json={
+                "query": {
+                    "market": market,
+                    "locale": locale,
+                    "searchTerm": normalized,
+                },
+                "limit": 1,
+            },
         )
+        places = payload.get("places") or []
+        if not isinstance(places, list) or not places:
+            return None
+        first_place = places[0] if isinstance(places[0], dict) else {}
+        iata_code = first_place.get("iataCode")
+        if not isinstance(iata_code, str) or not iata_code.strip():
+            return None
+        return iata_code.strip().upper()
+
+    async def create_live_prices_session(self, params: FlightSearchParams) -> LivePricesSession:
+        params = await self._resolve_search_params(params)
+        payload = await self._post_json(self.CREATE_SESSION_PATH, json=self._build_live_prices_payload(params))
 
         session_token = (
             payload.get("sessionToken")
@@ -82,9 +106,8 @@ class SkyscannerFlightClient:
         )
 
     async def poll_live_prices_session(self, session: LivePricesSession) -> LivePricesPollResult:
-        payload = await self._post_with_path_fallback(
-            self.POLL_SESSION_PATHS,
-            json={"sessionToken": session.session_token},
+        payload = await self._post_json(
+            self.POLL_SESSION_PATH_TEMPLATE.format(session_token=session.session_token),
         )
         return self._parse_poll_payload(payload)
 
@@ -116,15 +139,27 @@ class SkyscannerFlightClient:
         self,
         *,
         origin_iata: str,
-        outbound_date: str,
+        destination_iata: str | None = None,
+        outbound_date: str | None = None,
         market: str = "UK",
         locale: str = "en-GB",
         currency: str = "EUR",
     ) -> dict[str, Any]:
-        payload = await self._post_with_path_fallback(
-            self.INDICATIVE_SEARCH_PATHS,
+        resolved_origin_iata = await self.resolve_iata_code(origin_iata, market=market, locale=locale)
+        resolved_destination_iata = None
+        if destination_iata:
+            resolved_destination_iata = await self.resolve_iata_code(
+                destination_iata,
+                market=market,
+                locale=locale,
+            )
+        if not resolved_origin_iata:
+            resolved_origin_iata = "BCN"
+        payload = await self._post_json(
+            self.INDICATIVE_SEARCH_PATH,
             json=self._build_indicative_anywhere_payload(
-                origin_iata=origin_iata,
+                origin_iata=resolved_origin_iata,
+                destination_iata=resolved_destination_iata,
                 outbound_date=outbound_date,
                 market=market,
                 locale=locale,
@@ -133,23 +168,55 @@ class SkyscannerFlightClient:
         )
         return self._parse_indicative_payload(payload)
 
-    async def _post_with_path_fallback(self, paths: tuple[str, ...], **kwargs: Any) -> dict[str, Any]:
-        from httpx import HTTPStatusError
+    async def _post_json(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        payload = kwargs.get("json")
+        logger.info(
+            "Skyscanner endpoint call: base_url=%s path=%s api_host=%s api_key=%s",
+            self._base_url,
+            path,
+            self._api_host,
+            self._api_key,
+        )
+        logger.info(
+            "Skyscanner request payload: %s",
+            json.dumps(payload, sort_keys=True, default=str) if payload is not None else "null",
+        )
+        response = await self._connector.post(path, **kwargs)
+        return response.json()
 
-        last_error: Exception | None = None
-        for path in paths:
-            try:
-                response = await self._connector.post(path, **kwargs)
-                return response.json()
-            except HTTPStatusError as exc:
-                last_error = exc
-                if exc.response.status_code == 404:
-                    continue
-                raise
+    async def _resolve_search_params(self, params: FlightSearchParams) -> FlightSearchParams:
+        resolved_origin_iata = await self.resolve_iata_code(
+            params.origin_iata,
+            market=params.market,
+            locale=params.locale,
+        )
+        resolved_destination_iata = await self.resolve_iata_code(
+            params.destination_iata,
+            market=params.market,
+            locale=params.locale,
+        )
+        if not resolved_origin_iata:
+            resolved_origin_iata = "BCN"
+        if not resolved_destination_iata:
+            raise ValueError(f"Could not resolve destination airport from '{params.destination_iata}'")
 
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("Skyscanner request failed without response")
+        return replace(
+            params,
+            origin_iata=resolved_origin_iata,
+            destination_iata=resolved_destination_iata,
+        )
+
+    @staticmethod
+    def _build_headers(*, base_url: str, api_key: str, api_host: str) -> dict[str, str]:
+        headers = {"content-type": "application/json"}
+        if "partners.api.skyscanner.net" in base_url:
+            headers["x-api-key"] = api_key
+            return headers
+
+        headers["x-rapidapi-key"] = api_key
+        if api_host:
+            headers["x-rapidapi-host"] = api_host
+        return headers
 
     @staticmethod
     def _build_live_prices_payload(params: FlightSearchParams) -> dict[str, Any]:
@@ -165,12 +232,20 @@ class SkyscannerFlightClient:
                     {
                         "originPlaceId": {"iata": params.origin_iata},
                         "destinationPlaceId": {"iata": params.destination_iata},
-                        "date": params.departure_date.isoformat(),
+                        "date": {
+                            "year": params.departure_date.year,
+                            "month": params.departure_date.month,
+                            "day": params.departure_date.day,
+                        },
                     },
                     {
                         "originPlaceId": {"iata": params.destination_iata},
                         "destinationPlaceId": {"iata": params.origin_iata},
-                        "date": params.return_date.isoformat(),
+                        "date": {
+                            "year": params.return_date.year,
+                            "month": params.return_date.month,
+                            "day": params.return_date.day,
+                        },
                     },
                 ],
                 "includeSustainabilityData": False,
@@ -182,13 +257,15 @@ class SkyscannerFlightClient:
     def _build_indicative_anywhere_payload(
         *,
         origin_iata: str,
-        outbound_date: str,
+        destination_iata: str | None,
+        outbound_date: str | None,
         market: str,
         locale: str,
         currency: str,
     ) -> dict[str, Any]:
-        year, month, day = (int(part) for part in outbound_date.split("-", 2))
-        return {
+        if not origin_iata:
+            origin_iata = "BCN"
+        query: dict[str, Any] = {
             "query": {
                 "market": market,
                 "locale": locale,
@@ -196,12 +273,23 @@ class SkyscannerFlightClient:
                 "queryLegs": [
                     {
                         "originPlace": {"queryPlace": {"iata": origin_iata}},
-                        "destinationPlace": {"anywhere": True},
-                        "fixedDate": {"year": year, "month": month, "day": day},
+                        "destinationPlace": (
+                            {"queryPlace": {"iata": destination_iata}}
+                            if destination_iata
+                            else {"anywhere": True}
+                        ),
                     }
                 ],
-            }
+            },
         }
+        leg = query["query"]["queryLegs"][0]
+        if outbound_date:
+            year, month, day = (int(part) for part in outbound_date.split("-", 2))
+            leg["fixedDate"] = {"year": year, "month": month, "day": day}
+        else:
+            leg["anytime"] = True
+            query["query"]["dateTimeGroupingType"] = "DATE_TIME_GROUPING_TYPE_BY_MONTH"
+        return query
 
     @staticmethod
     def _parse_indicative_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -224,18 +312,28 @@ class SkyscannerFlightClient:
 
             mapped_quotes.append(
                 {
-                    "quote_id": str(quote_id),
-                    "price_amount": SkyscannerFlightClient._float_or_none(min_price.get("amount")),
-                    "price_unit": SkyscannerFlightClient._string_or_none(min_price.get("unit")),
+                    "price": {
+                        "amount": SkyscannerFlightClient._float_or_none(min_price.get("amount")),
+                        "unit": SkyscannerFlightClient._string_or_none(min_price.get("unit")),
+                    },
                     "is_direct": bool(quote.get("isDirect")),
-                    "origin": SkyscannerFlightClient._place_from_index(origin_place_id, places),
-                    "destination": SkyscannerFlightClient._place_from_index(destination_place_id, places),
+                    "airports": {
+                        "origin": SkyscannerFlightClient._compact_place_from_index(origin_place_id, places),
+                        "destination": SkyscannerFlightClient._compact_place_from_index(destination_place_id, places),
+                    },
                     "carrier": SkyscannerFlightClient._carrier_from_index(carrier_id, carriers),
-                    "outbound_departure": SkyscannerFlightClient._datetime_to_iso(outbound_leg.get("departureDateTime")),
-                    "inbound_departure": SkyscannerFlightClient._datetime_to_iso(inbound_leg.get("departureDateTime")),
-                    "raw_payload": quote,
+                    "outbound_datetime": SkyscannerFlightClient._datetime_to_iso(outbound_leg.get("departureDateTime")),
+                    "inbound_datetime": SkyscannerFlightClient._datetime_to_iso(inbound_leg.get("departureDateTime")),
                 }
             )
+
+        mapped_quotes.sort(
+            key=lambda item: (
+                item.get("price", {}).get("amount")
+                if item.get("price", {}).get("amount") is not None
+                else float("inf")
+            )
+        )
 
         return {
             "status": str(payload.get("status", "RESULT_STATUS_UNSPECIFIED")),
@@ -443,6 +541,16 @@ class SkyscannerFlightClient:
         }
 
     @staticmethod
+    def _compact_place_from_index(ref: Any, places: dict[str, Any]) -> dict[str, Any] | None:
+        full = SkyscannerFlightClient._place_from_index(ref, places)
+        if full is None:
+            return None
+        return {
+            "name": full.get("name"),
+            "iata": full.get("iata"),
+        }
+
+    @staticmethod
     def _carrier_from_index(ref: Any, carriers: dict[str, Any]) -> dict[str, Any] | None:
         if ref is None:
             return None
@@ -464,6 +572,8 @@ class SkyscannerFlightClient:
         month = value.get("month")
         day = value.get("day")
         if year is None or month is None or day is None:
+            return None
+        if int(year) <= 0 or int(month) <= 0 or int(day) <= 0:
             return None
         hour = int(value.get("hour", 0))
         minute = int(value.get("minute", 0))
@@ -494,3 +604,7 @@ class SkyscannerFlightClient:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+
+def _looks_like_iata(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z]{3}", value.strip()))

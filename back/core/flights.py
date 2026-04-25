@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, Protocol
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class FlightSearchParams:
     origin_iata: str
     destination_iata: str
@@ -20,7 +20,7 @@ class FlightSearchParams:
     direct_only: bool = False
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class FlightSegment:
     segment_id: str | None
     origin_iata: str
@@ -35,7 +35,7 @@ class FlightSegment:
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class FlightLegChain:
     leg_id: str
     origin_iata: str
@@ -48,7 +48,7 @@ class FlightLegChain:
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class RoundTripChainResult:
     itinerary_id: str
     outbound_chain: FlightLegChain
@@ -61,14 +61,14 @@ class RoundTripChainResult:
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class LivePricesSession:
     session_token: str
     polling_url: str | None = None
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True)
 class LivePricesPollResult:
     status: str
     completed: bool
@@ -77,6 +77,15 @@ class LivePricesPollResult:
 
 
 class FlightProvider(Protocol):
+    async def resolve_iata_code(
+        self,
+        search_term: str,
+        *,
+        market: str = "UK",
+        locale: str = "en-GB",
+    ) -> str | None:
+        ...
+
     async def create_live_prices_session(self, params: FlightSearchParams) -> LivePricesSession:
         ...
 
@@ -86,13 +95,34 @@ class FlightProvider(Protocol):
     async def search_roundtrip_chains(self, params: FlightSearchParams) -> LivePricesPollResult:
         ...
 
+    async def search_indicative_anywhere(
+        self,
+        *,
+        origin_iata: str,
+        destination_iata: str | None = None,
+        outbound_date: str | None = None,
+        market: str = "UK",
+        locale: str = "en-GB",
+        currency: str = "EUR",
+    ) -> dict[str, Any]:
+        ...
+
     async def close(self) -> None:
         ...
 
 
-@dataclass(slots=True)
+@dataclass
 class FlightChainService:
     provider: FlightProvider
+
+    async def resolve_iata_code(
+        self,
+        search_term: str,
+        *,
+        market: str = "UK",
+        locale: str = "en-GB",
+    ) -> str | None:
+        return await self.provider.resolve_iata_code(search_term, market=market, locale=locale)
 
     async def get_roundtrip_chains(
         self,
@@ -109,3 +139,22 @@ class FlightChainService:
             key=lambda item: item.price_amount if item.price_amount is not None else float("inf"),
         )
         return tuple(ranked[:limit])
+
+    async def get_indicative_anywhere(
+        self,
+        *,
+        origin_iata: str,
+        destination_iata: str | None = None,
+        outbound_date: str | None = None,
+        market: str = "UK",
+        locale: str = "en-GB",
+        currency: str = "EUR",
+    ) -> dict[str, Any]:
+        return await self.provider.search_indicative_anywhere(
+            origin_iata=origin_iata,
+            destination_iata=destination_iata,
+            outbound_date=outbound_date,
+            market=market,
+            locale=locale,
+            currency=currency,
+        )

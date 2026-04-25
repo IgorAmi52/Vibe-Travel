@@ -96,6 +96,10 @@ class TripPlannerState:
     source: str = "network"
     status: str = "received"
     trip_intent: Optional[IntentStruct] = None
+    origin_iata: Optional[str] = None
+    destination_iata: Optional[str] = None
+    flight_results: List[Dict[str, Any]] = field(default_factory=list)
+    person_count: int = 1
     next_step: Optional[str] = "extract_intent"
     errors: List[str] = field(default_factory=list)
     needs_clarification: bool = False
@@ -116,6 +120,10 @@ class TripPlannerState:
             source=payload.get("source", "network"),
             status=payload.get("status", "received"),
             trip_intent=IntentStruct.from_dict(trip_intent) if trip_intent else None,
+            origin_iata=payload.get("origin_iata"),
+            destination_iata=payload.get("destination_iata"),
+            flight_results=list(payload.get("flight_results") or []),
+            person_count=int(payload.get("person_count", 1) or 1),
             next_step=payload.get("next_step", "extract_intent"),
             errors=list(payload.get("errors") or []),
             needs_clarification=bool(payload.get("needs_clarification", False)),
@@ -133,6 +141,10 @@ class TripPlannerGraphState(TypedDict, total=False):
     source: str
     status: str
     trip_intent: Dict[str, Any]
+    origin_iata: Optional[str]
+    destination_iata: Optional[str]
+    flight_results: List[Dict[str, Any]]
+    person_count: int
     next_step: Optional[str]
     errors: List[str]
     needs_clarification: bool

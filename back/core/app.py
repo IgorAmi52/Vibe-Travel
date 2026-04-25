@@ -4,10 +4,14 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from clients import GeminiIntentClient, SyntheticIntentClient
+from core.clients import SkyscannerFlightClient
+from core.clients.mock_flights import SyntheticFlightClient
 from core.clients.base import IntentInferenceClient
 from core.config import AppConfig, load_app_config, load_markdown_prompt
+from core.flights import FlightChainService
 from core.graph import NodeHandler, TripPlannerGraphBuilder
 from core.nodes import ExtractIntentNode
+from core.nodes.search_flights import SearchFlightsNode
 from core.state import IntentStruct, TripPlannerGraphState, create_initial_state
 
 
@@ -18,6 +22,7 @@ class TripPlannerApp:
 
     def __post_init__(self) -> None:
         self.append_graph_part("extract_intent", self._create_extract_intent_node)
+        self.append_graph_part("search_flights", self._create_search_flights_node)
 
     def append_graph_part(self, name: str, handler: NodeHandler) -> None:
         self._graph_parts.append((name, handler))
@@ -32,7 +37,8 @@ class TripPlannerApp:
     ) -> TripPlannerGraphState:
         selected_mode = (mode or self.config.default_mode).strip().lower()
         inference_client = self._create_inference_client(selected_mode, mock_response)
-        graph = self._build_graph(inference_client)
+        flight_service = self._create_flight_service(selected_mode)
+        graph = self._build_graph(inference_client, flight_service)
 
         initial_state = dict(state or create_initial_state(user_query=user_query, source=source))
         initial_state["user_query"] = user_query
@@ -42,7 +48,11 @@ class TripPlannerApp:
         initial_state["clarification_prompt"] = None
         return graph.invoke(initial_state)
 
-    def _build_graph(self, inference_client: IntentInferenceClient) -> TripPlannerGraphBuilder:
+    def _build_graph(
+        self,
+        inference_client: IntentInferenceClient,
+        flight_service: FlightChainService,
+    ) -> TripPlannerGraphBuilder:
         builder = TripPlannerGraphBuilder()
         prompt_loader = lambda: load_markdown_prompt(self.config.prompt_path)
 
@@ -50,12 +60,18 @@ class TripPlannerApp:
             if name == "extract_intent":
                 builder.append_part(name, ExtractIntentNode(inference_client, prompt_loader))
                 continue
+            if name == "search_flights":
+                builder.append_part(name, SearchFlightsNode(flight_service=flight_service))
+                continue
             builder.append_part(name, handler)
 
         return builder
 
     def _create_extract_intent_node(self, state: TripPlannerGraphState) -> TripPlannerGraphState:
         raise NotImplementedError("The extract-intent node is created dynamically per inference client.")
+
+    def _create_search_flights_node(self, state: TripPlannerGraphState) -> TripPlannerGraphState:
+        raise NotImplementedError("The search-flights node is created dynamically per flight service.")
 
     def _create_inference_client(
         self,
@@ -68,6 +84,21 @@ class TripPlannerApp:
             override = IntentStruct.from_dict(mock_response) if mock_response else None
             return SyntheticIntentClient(intent_override=override)
         raise ValueError(f"Unsupported mode '{mode}'. Expected 'mock' or 'gemini'.")
+
+    def _create_flight_service(self, mode: str) -> FlightChainService:
+        if mode == "mock":
+            return FlightChainService(provider=SyntheticFlightClient())
+
+        return FlightChainService(
+            provider=SkyscannerFlightClient(
+                base_url=self.config.skyscanner_base_url,
+                api_key=self.config.skyscanner_api_key,
+                api_host=self.config.skyscanner_api_host,
+                timeout=self.config.skyscanner_timeout_seconds,
+                max_retries=self.config.skyscanner_max_retries,
+                retry_delay=self.config.skyscanner_retry_delay_seconds,
+            )
+        )
 
 
 def create_app(config: Optional[AppConfig] = None) -> TripPlannerApp:

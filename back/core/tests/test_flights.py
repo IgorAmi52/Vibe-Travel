@@ -49,6 +49,64 @@ def _params() -> FlightSearchParams:
 
 
 class SkyscannerFlightClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_resolve_iata_code_uses_autosuggest(self) -> None:
+        connector = _FakeConnector(
+            [
+                {
+                    "places": [
+                        {
+                            "entityId": "114117388",
+                            "iataCode": "VVO",
+                            "name": "Vladivostok",
+                        }
+                    ]
+                }
+            ]
+        )
+        client = SkyscannerFlightClient(
+            base_url="https://example.test",
+            api_key="key",
+            api_host="host",
+            connector=connector,
+        )
+
+        iata_code = await client.resolve_iata_code("Vladivostok")
+        path, kwargs = connector.post_calls[0]
+        self.assertEqual(path, "/apiservices/v3/autosuggest/flights")
+        self.assertEqual(kwargs["json"]["query"]["searchTerm"], "Vladivostok")
+        self.assertEqual(kwargs["json"]["limit"], 1)
+        self.assertEqual(iata_code, "VVO")
+
+    async def test_create_session_resolves_city_names_before_payload(self) -> None:
+        connector = _FakeConnector(
+            [
+                {"places": [{"iataCode": "BCN"}]},
+                {"places": [{"iataCode": "CDG"}]},
+                {"sessionToken": "abc"},
+            ]
+        )
+        client = SkyscannerFlightClient(
+            base_url="https://example.test",
+            api_key="key",
+            api_host="host",
+            connector=connector,
+        )
+        params = FlightSearchParams(
+            origin_iata="Barcelona",
+            destination_iata="Paris",
+            departure_date=date(2026, 6, 10),
+            return_date=date(2026, 6, 15),
+        )
+
+        await client.create_live_prices_session(params)
+        self.assertEqual(connector.post_calls[0][0], "/apiservices/v3/autosuggest/flights")
+        self.assertEqual(connector.post_calls[1][0], "/apiservices/v3/autosuggest/flights")
+        path, kwargs = connector.post_calls[2]
+        self.assertEqual(path, "/apiservices/v3/flights/live/search/create")
+        legs = kwargs["json"]["query"]["queryLegs"]
+        self.assertEqual(legs[0]["originPlaceId"]["iata"], "BCN")
+        self.assertEqual(legs[0]["destinationPlaceId"]["iata"], "CDG")
+
     async def test_create_payload_contains_outbound_and_inbound_legs(self) -> None:
         connector = _FakeConnector([{"sessionToken": "abc"}])
         client = SkyscannerFlightClient(
@@ -60,11 +118,13 @@ class SkyscannerFlightClientTests(unittest.IsolatedAsyncioTestCase):
 
         await client.create_live_prices_session(_params())
         path, kwargs = connector.post_calls[0]
-        self.assertEqual(path, "/api/v1/flights/live/search/create")
+        self.assertEqual(path, "/apiservices/v3/flights/live/search/create")
         legs = kwargs["json"]["query"]["queryLegs"]
         self.assertEqual(len(legs), 2)
         self.assertEqual(legs[0]["originPlaceId"]["iata"], "VIE")
         self.assertEqual(legs[1]["originPlaceId"]["iata"], "LON")
+        self.assertEqual(legs[0]["date"], {"year": 2026, "month": 6, "day": 10})
+        self.assertEqual(legs[1]["date"], {"year": 2026, "month": 6, "day": 15})
 
     async def test_poll_maps_roundtrip_chains(self) -> None:
         connector = _FakeConnector(
@@ -118,6 +178,8 @@ class SkyscannerFlightClientTests(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await client.poll_live_prices_session(LivePricesSession(session_token="abc"))
+        path, _ = connector.post_calls[0]
+        self.assertEqual(path, "/apiservices/v3/flights/live/search/poll/abc")
         self.assertTrue(result.completed)
         self.assertEqual(len(result.results), 1)
         self.assertEqual(result.results[0].outbound_chain.origin_iata, "VIE")
@@ -161,12 +223,65 @@ class SkyscannerFlightClientTests(unittest.IsolatedAsyncioTestCase):
 
         result = await client.search_indicative_anywhere(origin_iata="VIE", outbound_date="2026-07-01")
         path, kwargs = connector.post_calls[0]
-        self.assertEqual(path, "/api/v1/flights/indicative/search")
+        self.assertEqual(path, "/apiservices/v3/flights/indicative/search")
         leg = kwargs["json"]["query"]["queryLegs"][0]
         self.assertEqual(leg["originPlace"]["queryPlace"]["iata"], "VIE")
         self.assertTrue(leg["destinationPlace"]["anywhere"])
         self.assertEqual(result["status"], "RESULT_STATUS_COMPLETE")
-        self.assertEqual(result["quotes"][0]["destination"]["iata"], "AGP")
+        self.assertEqual(result["quotes"][0]["airports"]["destination"]["iata"], "AGP")
+        self.assertEqual(result["quotes"][0]["airports"]["origin"]["name"], "Vienna")
+        self.assertEqual(result["quotes"][0]["price"]["amount"], 89.0)
+        self.assertEqual(result["quotes"][0]["outbound_datetime"], "2026-07-01T00:00:00")
+
+    async def test_indicative_anywhere_supports_anytime_payload(self) -> None:
+        connector = _FakeConnector(
+            [
+                {
+                    "status": "RESULT_STATUS_COMPLETE",
+                    "content": {"results": {"quotes": {}, "places": {}, "carriers": {}}},
+                }
+            ]
+        )
+        client = SkyscannerFlightClient(
+            base_url="https://example.test",
+            api_key="key",
+            api_host="host",
+            connector=connector,
+        )
+
+        await client.search_indicative_anywhere(origin_iata="VIE")
+        path, kwargs = connector.post_calls[0]
+        self.assertEqual(path, "/apiservices/v3/flights/indicative/search")
+        query = kwargs["json"]["query"]
+        leg = query["queryLegs"][0]
+        self.assertEqual(leg["originPlace"]["queryPlace"]["iata"], "VIE")
+        self.assertTrue(leg["destinationPlace"]["anywhere"])
+        self.assertIs(leg["anytime"], True)
+        self.assertEqual(query["dateTimeGroupingType"], "DATE_TIME_GROUPING_TYPE_BY_MONTH")
+
+    async def test_indicative_supports_specific_destination_without_dates(self) -> None:
+        connector = _FakeConnector(
+            [
+                {
+                    "status": "RESULT_STATUS_COMPLETE",
+                    "content": {"results": {"quotes": {}, "places": {}, "carriers": {}}},
+                }
+            ]
+        )
+        client = SkyscannerFlightClient(
+            base_url="https://example.test",
+            api_key="key",
+            api_host="host",
+            connector=connector,
+        )
+
+        await client.search_indicative_anywhere(origin_iata="BCN", destination_iata="CDG")
+        path, kwargs = connector.post_calls[0]
+        self.assertEqual(path, "/apiservices/v3/flights/indicative/search")
+        leg = kwargs["json"]["query"]["queryLegs"][0]
+        self.assertEqual(leg["originPlace"]["queryPlace"]["iata"], "BCN")
+        self.assertEqual(leg["destinationPlace"]["queryPlace"]["iata"], "CDG")
+        self.assertIs(leg["anytime"], True)
 
 
 class FlightChainServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -238,6 +353,40 @@ class FlightChainServiceTests(unittest.IsolatedAsyncioTestCase):
         results = await service.get_roundtrip_chains(_params(), limit=1)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].itinerary_id, "cheap")
+
+    async def test_service_calls_indicative_anywhere(self) -> None:
+        class _Provider:
+            async def search_roundtrip_chains(self, params: FlightSearchParams):
+                raise NotImplementedError
+
+            async def search_indicative_anywhere(
+                self,
+                *,
+                origin_iata: str,
+                destination_iata: str | None = None,
+                outbound_date: str | None = None,
+                market: str = "UK",
+                locale: str = "en-GB",
+                currency: str = "EUR",
+            ):
+                del destination_iata
+                return {
+                    "status": "RESULT_STATUS_COMPLETE",
+                    "quotes": [
+                        {"origin": {"iata": origin_iata}, "outbound_date": outbound_date, "price_amount": 99.0}
+                    ],
+                    "market": market,
+                    "locale": locale,
+                    "currency": currency,
+                }
+
+            async def close(self) -> None:
+                return None
+
+        service = FlightChainService(provider=_Provider())
+        result = await service.get_indicative_anywhere(origin_iata="VIE", outbound_date="2026-07-01")
+        self.assertEqual(result["quotes"][0]["origin"]["iata"], "VIE")
+        self.assertEqual(result["quotes"][0]["outbound_date"], "2026-07-01")
 
 
 if __name__ == "__main__":
