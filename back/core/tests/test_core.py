@@ -451,17 +451,34 @@ class CoreModuleTests(unittest.TestCase):
                         "currency": currency,
                     }
                 )
+                if origin_iata == "BCN":
+                    return {
+                        "status": "RESULT_STATUS_COMPLETE",
+                        "quotes": [
+                            {
+                                "airports": {
+                                    "origin": {"iata": "BCN", "name": "Barcelona"},
+                                    "destination": {"iata": "CDG", "name": "Paris"},
+                                },
+                                "outbound_datetime": "2026-07-01T09:00:00",
+                                "price": {"amount": 70.0, "unit": "PRICE_UNIT_WHOLE"},
+                                "carrier": {"name": "Outbound"},
+                                "is_direct": True,
+                            }
+                        ],
+                    }
                 return {
                     "status": "RESULT_STATUS_COMPLETE",
                     "quotes": [
                         {
                             "airports": {
-                                "origin": {"iata": origin_iata, "name": origin_iata},
-                                "destination": {"iata": destination_iata, "name": destination_iata},
+                                "origin": {"iata": "CDG", "name": "Paris"},
+                                "destination": {"iata": "BCN", "name": "Barcelona"},
                             },
-                            "outbound_datetime": "2026-07-01T00:00:00",
-                            "inbound_datetime": "2026-07-05T00:00:00",
-                            "price": {"amount": 150.0, "unit": "PRICE_UNIT_WHOLE"},
+                            "outbound_datetime": "2026-07-05T18:00:00",
+                            "price": {"amount": 80.0, "unit": "PRICE_UNIT_WHOLE"},
+                            "carrier": {"name": "Inbound"},
+                            "is_direct": True,
                         }
                     ],
                 }
@@ -485,10 +502,18 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(result["origin_iata"], "BCN")
         self.assertEqual(result["destination_iata"], "CDG")
         self.assertEqual(result["next_step"], "search_hotels")
+        self.assertEqual(len(provider.calls), 2)
         self.assertEqual(provider.calls[0]["origin_iata"], "BCN")
         self.assertEqual(provider.calls[0]["destination_iata"], "CDG")
         self.assertEqual(provider.calls[0]["outbound_date"], "2026-07-01")
-        self.assertEqual(provider.calls[0]["return_date"], "2026-07-05")
+        self.assertEqual(provider.calls[0]["return_date"], None)
+        self.assertEqual(provider.calls[1]["origin_iata"], "CDG")
+        self.assertEqual(provider.calls[1]["destination_iata"], "BCN")
+        self.assertEqual(provider.calls[1]["outbound_date"], "2026-07-05")
+        self.assertEqual(provider.calls[1]["return_date"], None)
+        self.assertEqual(result["flight_results"][0]["outbound_datetime"], "2026-07-01T09:00:00")
+        self.assertEqual(result["flight_results"][0]["inbound_datetime"], "2026-07-05T18:00:00")
+        self.assertEqual(result["flight_results"][0]["price"]["amount"], 150.0)
         self.assertTrue(provider.closed)
 
     def test_search_flights_uses_indicative_with_destination_when_dates_missing(self) -> None:

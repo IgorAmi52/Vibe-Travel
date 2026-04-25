@@ -420,6 +420,69 @@ class FlightChainServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].itinerary_id, "cheap")
 
+    async def test_service_groups_indicative_outbound_and_inbound_quotes(self) -> None:
+        class _Provider:
+            async def search_roundtrip_chains(self, params: FlightSearchParams):
+                raise NotImplementedError
+
+            async def search_indicative_anywhere(
+                self,
+                *,
+                origin_iata: str,
+                destination_iata: str | None = None,
+                outbound_date: str | None = None,
+                return_date: str | None = None,
+                market: str = "UK",
+                locale: str = "en-GB",
+                currency: str = "EUR",
+            ):
+                del return_date, market, locale, currency
+                if origin_iata == "BCN" and destination_iata == "CDG":
+                    return {
+                        "quotes": [
+                            {
+                                "airports": {
+                                    "origin": {"iata": "BCN", "name": "Barcelona"},
+                                    "destination": {"iata": "CDG", "name": "Paris CDG"},
+                                },
+                                "outbound_datetime": f"{outbound_date}T09:00:00",
+                                "price": {"amount": 70.0, "unit": "PRICE_UNIT_WHOLE"},
+                                "carrier": {"name": "Outbound Air"},
+                                "is_direct": True,
+                            }
+                        ]
+                    }
+                return {
+                    "quotes": [
+                        {
+                            "airports": {
+                                "origin": {"iata": "CDG", "name": "Paris CDG"},
+                                "destination": {"iata": "BCN", "name": "Barcelona"},
+                            },
+                            "outbound_datetime": f"{outbound_date}T18:00:00",
+                            "price": {"amount": 80.0, "unit": "PRICE_UNIT_WHOLE"},
+                            "carrier": {"name": "Inbound Air"},
+                            "is_direct": True,
+                        }
+                    ]
+                }
+
+            async def close(self) -> None:
+                return None
+
+        service = FlightChainService(provider=_Provider())
+        results = await service.get_indicative_roundtrip(
+            origin_iata="BCN",
+            destination_iata="CDG",
+            departure_date="2026-07-01",
+            return_date="2026-07-05",
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["outbound_datetime"], "2026-07-01T09:00:00")
+        self.assertEqual(results[0]["inbound_datetime"], "2026-07-05T18:00:00")
+        self.assertEqual(results[0]["price"]["amount"], 150.0)
+        self.assertEqual(results[0]["airports"]["destination"]["iata"], "CDG")
+
     async def test_service_calls_indicative_anywhere(self) -> None:
         class _Provider:
             async def search_roundtrip_chains(self, params: FlightSearchParams):
