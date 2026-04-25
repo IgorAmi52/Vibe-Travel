@@ -45,56 +45,49 @@ We use four Skyscanner endpoints:
 ## Pipeline
 
 ```
-User Input (vibe keywords + destination + dates + guests)
+User Input (vibe keywords + destination)
     │
     ▼
-1. Autosuggest  →  resolve destination to entityId
+1. Autosuggest  →  discover hotels for destination (entityIds = hotelIds)
     │
     ▼
-2. Live Pricing  →  discover hotels (hotelIds + prices) for destination/dates
-    │
-    ▼
-3. Content + Reviews (parallel per hotel)
+2. Content + Reviews (parallel per hotel)
    Content  →  description, amenities, star rating, guest rating
    Reviews  →  top N guest review texts
     │
     ▼
-4. Build text blob per hotel:  description + amenities keywords + review texts
+3. Build text blob per hotel:  description + amenities keywords + review texts
     │
     ▼
-5. Embed vibe query + hotel text blobs  (Gemini text-embedding-004)
+4. Embed vibe query + hotel text blobs  (Gemini text-embedding-004)
     │
     ▼
-6. Cosine similarity + composite scoring
+5. Cosine similarity + composite scoring
     │
     ▼
-7. Return ranked list → downstream reranker
+6. Return ranked list → downstream reranker
 ```
 
-### Step 1: Resolve Destination
+### Step 1: Discover Hotels
 - Call Autosuggest with user's destination text
-- Extract `entityId` for the top match
+- Autosuggest returns hotel entities directly — each `entityId` is a hotel ID
+- The destination string is passed through as-is (no resolution needed)
 
-### Step 2: Discover Hotels
-- Call Live Pricing with `entityId`, check-in/check-out dates, and guest count
-- This is an async endpoint: create search → poll until results are ready
-- Returns hotel IDs, names, and prices
-
-### Step 3: Fetch Hotel Data (parallel)
-- For each hotel from Step 2, fetch Content and Reviews in parallel
+### Step 2: Fetch Hotel Data (parallel)
+- For each hotel from Step 1, fetch Content and Reviews in parallel
 - **Content:** hotel description (rich text), amenities array, star rating, guest rating, accommodation type
 - **Reviews:** top N review texts sorted by recommended, with guest type and rating info
 
-### Step 4: Build Embeddable Text
+### Step 3: Build Embeddable Text
 - Concatenate per hotel: `{description} {amenities as keywords} {review_1} {review_2} ... {review_N}`
 - This text blob captures both how the hotel presents itself (description + amenities) and how guests actually experienced it (reviews)
 
-### Step 5: Embedding & Similarity
+### Step 4: Embedding & Similarity
 - Generate embeddings for each hotel's text blob using Gemini `text-embedding-004`
 - Generate embedding for the vibe input string
 - Compute cosine similarity between vibe embedding and each hotel embedding
 
-### Step 6: Composite Scoring
+### Step 5: Composite Scoring
 
 ```
 composite_score = (w1 * vibe_similarity) + (w2 * normalized_price_score) + (w3 * normalized_guest_rating)
@@ -105,7 +98,7 @@ composite_score = (w1 * vibe_similarity) + (w2 * normalized_price_score) + (w3 *
 - `normalized_guest_rating` — guest rating normalized to 0–1 scale
 - Weights (`w1`, `w2`, `w3`) are configurable, default emphasis on vibe similarity
 
-### Step 7: Output
+### Step 6: Output
 - Sort by composite score descending
 - Return ranked list to the reranker
 
@@ -130,16 +123,20 @@ back/
 ├── core/
 │   ├── api/                               (interfaces for external API clients)
 │   │   └── embed_provider.py              (EmbedProvider interface — domain port)
-│   └── models/
-│       └── hotel.py                       (Hotel, HotelRankingResult, Skyscanner DTOs)
+│   ├── models/
+│   │   └── hotel.py                       (Hotel, ScoredHotel, HotelContent, HotelReview, Destination)
+│   ├── dto/
+│   │   └── hotel.py                       (HotelRankingRequest, HotelRankingResponse)
+│   └── services/
+│       ├── similarity_service.py          (SimilarityService interface)
+│       ├── hotel_embedding_service.py     (HotelEmbeddingService interface)
+│       ├── hotel_embedding_service_impl.py (builds hotel text blobs + calls embed provider)
+│       └── hotel_ranking_service.py       (orchestrator: fetch → embed → score → rank)
 ├── clients/
-│   ├── api_connector.py                   (exists — async HTTP client with retry)
+│   ├── api_connector.py                   (async HTTP client with retry)
 │   ├── gemini_embed_provider.py           (Gemini embedding implementation)
+│   ├── cosine_similarity_service.py       (CosineSimilarityService — numpy)
 │   └── skyscanner_client.py               (wraps ApiConnector for all 4 endpoints)
-├── hotel/
-│   ├── hotel_embedding_service.py         (builds hotel text blobs + calls embed provider)
-│   ├── hotel_ranking_service.py           (orchestrator: fetch → embed → score → rank)
-│   └── router.py                          (FastAPI endpoint)
 ```
 
 ## Tech Stack
