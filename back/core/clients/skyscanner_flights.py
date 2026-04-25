@@ -78,6 +78,13 @@ class SkyscannerFlightClient:
         first_place = places[0] if isinstance(places[0], dict) else {}
         iata_code = first_place.get("iataCode")
         if not isinstance(iata_code, str) or not iata_code.strip():
+            airport_information = (
+                first_place.get("airportInformation")
+                if isinstance(first_place.get("airportInformation"), dict)
+                else {}
+            )
+            iata_code = airport_information.get("iataCode")
+        if not isinstance(iata_code, str) or not iata_code.strip():
             return None
         return iata_code.strip().upper()
 
@@ -141,6 +148,7 @@ class SkyscannerFlightClient:
         origin_iata: str,
         destination_iata: str | None = None,
         outbound_date: str | None = None,
+        return_date: str | None = None,
         market: str = "UK",
         locale: str = "en-GB",
         currency: str = "EUR",
@@ -161,6 +169,7 @@ class SkyscannerFlightClient:
                 origin_iata=resolved_origin_iata,
                 destination_iata=resolved_destination_iata,
                 outbound_date=outbound_date,
+                return_date=return_date,
                 market=market,
                 locale=locale,
                 currency=currency,
@@ -259,6 +268,7 @@ class SkyscannerFlightClient:
         origin_iata: str,
         destination_iata: str | None,
         outbound_date: str | None,
+        return_date: str | None,
         market: str,
         locale: str,
         currency: str,
@@ -283,7 +293,14 @@ class SkyscannerFlightClient:
             },
         }
         leg = query["query"]["queryLegs"][0]
-        if outbound_date:
+        if outbound_date and return_date:
+            outbound_year, outbound_month, _ = (int(part) for part in outbound_date.split("-", 3)[:3])
+            return_year, return_month, _ = (int(part) for part in return_date.split("-", 3)[:3])
+            leg["date_range"] = {
+                "startDate": {"year": outbound_year, "month": outbound_month},
+                "endDate": {"year": return_year, "month": return_month},
+            }
+        elif outbound_date:
             year, month, day = (int(part) for part in outbound_date.split("-", 2))
             leg["fixedDate"] = {"year": year, "month": month, "day": day}
         else:

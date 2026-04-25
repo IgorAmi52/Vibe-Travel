@@ -34,110 +34,74 @@ class SearchFlightsNode:
 
         try:
             if not destination_iata and places:
-                destination_iata = await self._resolve_iata(places[0])
+                destination_iata, _ = await self._resolve_first_iata(places)
 
             if not destination_iata and places:
+                attempted_places = ", ".join(places)
                 return {
                     "status": "needs_clarification",
                     "next_step": "search_flights",
                     "origin_iata": origin_iata,
                     "needs_clarification": True,
                     "clarification_prompt": (
-                        f"I couldn't resolve an airport for {places[0]}. "
+                        f"I couldn't resolve an airport for any of these places: {attempted_places}. "
                         "Could you specify a nearby airport or another destination?"
                     ),
                 }
 
-            if not destination_iata or not departure_date_str or not return_date_str:
-                try:
-                    indicative = await self.flight_service.get_indicative_anywhere(
-                        origin_iata=origin_iata,
-                        destination_iata=destination_iata,
-                        outbound_date=departure_date_str,
-                    )
-                except Exception as exc:
-                    return {
-                        "status": "needs_clarification",
-                        "next_step": "search_flights",
-                        "needs_clarification": True,
-                        "clarification_prompt": (
-                            f"Indicative flight search failed ({exc}). "
-                            "Could you check your departure date or try a different origin airport?"
-                        ),
-                    }
-
-                if not isinstance(indicative, dict):
-                    return {
-                        "status": "needs_clarification",
-                        "next_step": "search_flights",
-                        "needs_clarification": True,
-                        "clarification_prompt": (
-                            "Indicative flight search did not return usable results. "
-                            "Could you try a different origin airport or travel month?"
-                        ),
-                    }
-
-                quotes = list(indicative.get("quotes") or [])
-                if not quotes:
-                    return {
-                        "status": "needs_clarification",
-                        "next_step": "search_flights",
-                        "needs_clarification": True,
-                        "clarification_prompt": (
-                            "No indicative destinations found for your search. "
-                            "Could you try different dates or a nearby airport?"
-                        ),
-                    }
-
-                return {
-                    "flight_results": quotes,
-                    "origin_iata": origin_iata,
-                    "destination_iata": destination_iata,
-                    "person_count": person_count,
-                    "status": "indicative_flights_ready",
-                    "next_step": "select_dates" if destination_iata else "select_destination",
-                    "needs_clarification": False,
-                    "clarification_prompt": None,
-                }
-
             try:
-                params = FlightSearchParams(
+                indicative = await self.flight_service.get_indicative_anywhere(
                     origin_iata=origin_iata,
                     destination_iata=destination_iata,
-                    departure_date=date.fromisoformat(departure_date_str),
-                    return_date=date.fromisoformat(return_date_str),
-                    adults=person_count,
+                    outbound_date=departure_date_str,
+                    return_date=return_date_str,
                 )
-                results = await self.flight_service.get_roundtrip_chains(params, limit=self.limit)
             except Exception as exc:
                 return {
                     "status": "needs_clarification",
                     "next_step": "search_flights",
                     "needs_clarification": True,
                     "clarification_prompt": (
-                        f"Flight search failed ({exc}). "
+                        f"Indicative flight search failed ({exc}). "
                         "Could you check your dates or try a different destination?"
                     ),
                 }
 
-            if not results:
+            if not isinstance(indicative, dict):
                 return {
                     "status": "needs_clarification",
                     "next_step": "search_flights",
                     "needs_clarification": True,
                     "clarification_prompt": (
-                        "No flights found for your search. "
+                        "Indicative flight search did not return usable results. "
+                        "Could you try a different origin airport or travel month?"
+                    ),
+                }
+
+            quotes = list(indicative.get("quotes") or [])
+            if not quotes:
+                return {
+                    "status": "needs_clarification",
+                    "next_step": "search_flights",
+                    "needs_clarification": True,
+                    "clarification_prompt": (
+                        "No indicative destinations found for your search. "
                         "Could you try different dates or a nearby airport?"
                     ),
                 }
 
+            has_full_dates = bool(destination_iata and departure_date_str and return_date_str)
             return {
-                "flight_results": [_chain_to_dict(r) for r in results],
+                "flight_results": quotes,
                 "origin_iata": origin_iata,
                 "destination_iata": destination_iata,
                 "person_count": person_count,
-                "status": "flights_ready",
-                "next_step": "search_hotels",
+                "status": "flights_ready" if has_full_dates else "indicative_flights_ready",
+                "next_step": (
+                    "search_hotels"
+                    if has_full_dates
+                    else ("select_dates" if destination_iata else "select_destination")
+                ),
                 "needs_clarification": False,
                 "clarification_prompt": None,
             }
@@ -146,6 +110,13 @@ class SearchFlightsNode:
 
     async def _resolve_iata(self, search_term: str) -> str | None:
         return await self.flight_service.resolve_iata_code(search_term)
+
+    async def _resolve_first_iata(self, places: List[str]) -> tuple[str | None, str | None]:
+        for place in places:
+            resolved_iata = await self._resolve_iata(place)
+            if resolved_iata:
+                return resolved_iata, place
+        return None, None
 
 
 def _chain_to_dict(chain: RoundTripChainResult) -> Dict[str, Any]:

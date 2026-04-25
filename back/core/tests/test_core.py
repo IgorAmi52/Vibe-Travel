@@ -323,10 +323,12 @@ class CoreModuleTests(unittest.TestCase):
                 origin_iata: str,
                 destination_iata=None,
                 outbound_date=None,
+                return_date=None,
                 market: str = "UK",
                 locale: str = "en-GB",
                 currency: str = "EUR",
             ):
+                del return_date
                 return {
                     "status": "RESULT_STATUS_COMPLETE",
                     "quotes": [
@@ -376,10 +378,12 @@ class CoreModuleTests(unittest.TestCase):
                 origin_iata: str,
                 destination_iata=None,
                 outbound_date=None,
+                return_date=None,
                 market: str = "UK",
                 locale: str = "en-GB",
                 currency: str = "EUR",
             ):
+                del return_date
                 return {
                     "status": "RESULT_STATUS_COMPLETE",
                     "quotes": [
@@ -414,7 +418,7 @@ class CoreModuleTests(unittest.TestCase):
         class _Provider:
             def __init__(self) -> None:
                 self.closed = False
-                self.last_params = None
+                self.calls = []
 
             async def resolve_iata_code(self, search_term: str, *, market: str = "UK", locale: str = "en-GB"):
                 del market, locale
@@ -423,59 +427,44 @@ class CoreModuleTests(unittest.TestCase):
                 return None
 
             async def search_roundtrip_chains(self, params):
-                self.last_params = params
-                leg_out = FlightLegChain(
-                    leg_id="leg-out",
-                    origin_iata=params.origin_iata,
-                    destination_iata=params.destination_iata,
-                    departure_at="2026-07-01T08:00:00",
-                    arrival_at="2026-07-01T10:00:00",
-                    duration_minutes=120,
-                    stop_count=0,
-                    segments=(
-                        FlightSegment(
-                            segment_id="seg-out",
-                            origin_iata=params.origin_iata,
-                            destination_iata=params.destination_iata,
-                            departure_at="2026-07-01T08:00:00",
-                            arrival_at="2026-07-01T10:00:00",
-                        ),
-                    ),
-                )
-                leg_in = FlightLegChain(
-                    leg_id="leg-in",
-                    origin_iata=params.destination_iata,
-                    destination_iata=params.origin_iata,
-                    departure_at="2026-07-05T18:00:00",
-                    arrival_at="2026-07-05T20:00:00",
-                    duration_minutes=120,
-                    stop_count=0,
-                    segments=(
-                        FlightSegment(
-                            segment_id="seg-in",
-                            origin_iata=params.destination_iata,
-                            destination_iata=params.origin_iata,
-                            departure_at="2026-07-05T18:00:00",
-                            arrival_at="2026-07-05T20:00:00",
-                        ),
-                    ),
-                )
-                return LivePricesPollResult(
-                    status="COMPLETE",
-                    completed=True,
-                    results=(
-                        RoundTripChainResult(
-                            itinerary_id="trip-1",
-                            outbound_chain=leg_out,
-                            inbound_chain=leg_in,
-                            price_amount=150.0,
-                            price_currency="EUR",
-                        ),
-                    ),
-                )
+                raise AssertionError("roundtrip search should not run in indicative date-range flow")
 
-            async def search_indicative_anywhere(self, **kwargs):
-                raise AssertionError("indicative search should not run when a place can be resolved")
+            async def search_indicative_anywhere(
+                self,
+                *,
+                origin_iata: str,
+                destination_iata=None,
+                outbound_date=None,
+                return_date=None,
+                market: str = "UK",
+                locale: str = "en-GB",
+                currency: str = "EUR",
+            ):
+                self.calls.append(
+                    {
+                        "origin_iata": origin_iata,
+                        "destination_iata": destination_iata,
+                        "outbound_date": outbound_date,
+                        "return_date": return_date,
+                        "market": market,
+                        "locale": locale,
+                        "currency": currency,
+                    }
+                )
+                return {
+                    "status": "RESULT_STATUS_COMPLETE",
+                    "quotes": [
+                        {
+                            "airports": {
+                                "origin": {"iata": origin_iata, "name": origin_iata},
+                                "destination": {"iata": destination_iata, "name": destination_iata},
+                            },
+                            "outbound_datetime": "2026-07-01T00:00:00",
+                            "inbound_datetime": "2026-07-05T00:00:00",
+                            "price": {"amount": 150.0, "unit": "PRICE_UNIT_WHOLE"},
+                        }
+                    ],
+                }
 
             async def close(self) -> None:
                 self.closed = True
@@ -495,8 +484,11 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(result["status"], "flights_ready")
         self.assertEqual(result["origin_iata"], "BCN")
         self.assertEqual(result["destination_iata"], "CDG")
-        self.assertEqual(provider.last_params.origin_iata, "BCN")
-        self.assertEqual(provider.last_params.destination_iata, "CDG")
+        self.assertEqual(result["next_step"], "search_hotels")
+        self.assertEqual(provider.calls[0]["origin_iata"], "BCN")
+        self.assertEqual(provider.calls[0]["destination_iata"], "CDG")
+        self.assertEqual(provider.calls[0]["outbound_date"], "2026-07-01")
+        self.assertEqual(provider.calls[0]["return_date"], "2026-07-05")
         self.assertTrue(provider.closed)
 
     def test_search_flights_uses_indicative_with_destination_when_dates_missing(self) -> None:
@@ -520,6 +512,7 @@ class CoreModuleTests(unittest.TestCase):
                 origin_iata: str,
                 destination_iata=None,
                 outbound_date=None,
+                return_date=None,
                 market: str = "UK",
                 locale: str = "en-GB",
                 currency: str = "EUR",
@@ -529,6 +522,7 @@ class CoreModuleTests(unittest.TestCase):
                         "origin_iata": origin_iata,
                         "destination_iata": destination_iata,
                         "outbound_date": outbound_date,
+                        "return_date": return_date,
                         "market": market,
                         "locale": locale,
                         "currency": currency,
@@ -564,6 +558,71 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(result["next_step"], "select_dates")
         self.assertEqual(provider.calls[0]["destination_iata"], "CDG")
         self.assertIsNone(provider.calls[0]["outbound_date"])
+        self.assertIsNone(provider.calls[0]["return_date"])
+        self.assertTrue(provider.closed)
+
+    def test_search_flights_tries_next_place_when_first_cannot_be_resolved(self) -> None:
+        class _Provider:
+            def __init__(self) -> None:
+                self.closed = False
+                self.calls = []
+
+            async def resolve_iata_code(self, search_term: str, *, market: str = "UK", locale: str = "en-GB"):
+                del market, locale
+                if search_term == "Chamonix":
+                    return None
+                if search_term == "Zermatt":
+                    return "ZRH"
+                return None
+
+            async def search_roundtrip_chains(self, params):
+                raise AssertionError("roundtrip search should not run when dates are missing")
+
+            async def search_indicative_anywhere(
+                self,
+                *,
+                origin_iata: str,
+                destination_iata=None,
+                outbound_date=None,
+                return_date=None,
+                market: str = "UK",
+                locale: str = "en-GB",
+                currency: str = "EUR",
+            ):
+                self.calls.append(
+                    {
+                        "origin_iata": origin_iata,
+                        "destination_iata": destination_iata,
+                        "outbound_date": outbound_date,
+                        "return_date": return_date,
+                    }
+                )
+                return {
+                    "status": "RESULT_STATUS_COMPLETE",
+                    "quotes": [
+                        {
+                            "airports": {
+                                "origin": {"iata": origin_iata, "name": origin_iata},
+                                "destination": {"iata": destination_iata, "name": destination_iata},
+                            },
+                            "outbound_datetime": None,
+                            "inbound_datetime": None,
+                            "price": {"amount": 110.0, "unit": "PRICE_UNIT_WHOLE"},
+                        }
+                    ],
+                }
+
+            async def close(self) -> None:
+                self.closed = True
+
+        provider = _Provider()
+        node = SearchFlightsNode(flight_service=FlightChainService(provider=provider))
+        result = node({"trip_intent": {"places": ["Chamonix", "Zermatt", "Grindelwald"]}})
+
+        self.assertEqual(result["status"], "indicative_flights_ready")
+        self.assertEqual(result["destination_iata"], "ZRH")
+        self.assertEqual(result["next_step"], "select_dates")
+        self.assertEqual(provider.calls[0]["destination_iata"], "ZRH")
         self.assertTrue(provider.closed)
 
 
