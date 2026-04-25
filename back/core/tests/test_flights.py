@@ -60,7 +60,7 @@ class SkyscannerFlightClientTests(unittest.IsolatedAsyncioTestCase):
 
         await client.create_live_prices_session(_params())
         path, kwargs = connector.post_calls[0]
-        self.assertEqual(path, "/v3/flights/live/search/create")
+        self.assertEqual(path, "/api/v1/flights/live/search/create")
         legs = kwargs["json"]["query"]["queryLegs"]
         self.assertEqual(len(legs), 2)
         self.assertEqual(legs[0]["originPlaceId"]["iata"], "VIE")
