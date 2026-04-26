@@ -727,6 +727,54 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(result["hotel_results"][0]["name"], "Paris Spa Retreat")
         self.assertTrue(hotel_service.closed)
 
+    def test_search_hotels_uses_default_stay_when_only_outbound_flight_date_exists(self) -> None:
+        class _HotelService:
+            def __init__(self) -> None:
+                self.calls = []
+                self.closed = False
+
+            async def rank_hotels(self, *, vibe_query, destination, check_in, check_out, currency="USD"):
+                self.calls.append(
+                    {
+                        "check_in": check_in.isoformat(),
+                        "check_out": check_out.isoformat(),
+                        "destination": destination,
+                    }
+                )
+                return [
+                    ScoredHotel(
+                        hotel=Hotel(hotel_id="h-1", name="Paris Stay", price=200.0, currency="USD"),
+                        vibe_similarity=0.8,
+                        price_score=0.8,
+                        guest_rating_score=0.8,
+                        composite_score=0.8,
+                    )
+                ]
+
+            async def close(self) -> None:
+                self.closed = True
+
+        hotel_service = _HotelService()
+        node = SearchHotelsNode(hotel_ranking_service_factory=lambda: hotel_service)
+        result = node(
+            {
+                "status": "indicative_flights_ready",
+                "destination_place": "Paris",
+                "trip_intent": {"places": ["Paris"], "vibe": "spa"},
+                "flight_results": [
+                    {
+                        "outbound_datetime": "2026-08-10T09:00:00",
+                        "inbound_datetime": None,
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(result["status"], "hotels_ranked")
+        self.assertEqual(hotel_service.calls[0]["check_in"], "2026-08-10")
+        self.assertEqual(hotel_service.calls[0]["check_out"], "2026-08-14")
+        self.assertTrue(hotel_service.closed)
+
     def test_group_results_filters_final_offers_by_budget(self) -> None:
         node = GroupResultsNode(flight_limit=2, hotel_limit=2, option_limit=4)
         result = node(

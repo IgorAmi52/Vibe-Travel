@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Callable, Dict
 
 from core.services.hotel_ranking_service import HotelRankingService
 from core.state import TripPlannerGraphState
 
 logger = logging.getLogger(__name__)
+DEFAULT_STAY_DAYS = 4
 
 
 @dataclass
@@ -21,7 +22,7 @@ class SearchHotelsNode:
         return asyncio.run(self._execute(state))
 
     async def _execute(self, state: TripPlannerGraphState) -> Dict[str, Any]:
-        if state.get("status") != "flights_ready":
+        if state.get("status") not in {"flights_ready", "indicative_flights_ready"}:
             return _noop_update(state)
 
         intent = state.get("trip_intent") or {}
@@ -166,7 +167,14 @@ def _fallback_dates_from_flights(flight_results: list[dict[str, Any]]) -> tuple[
     first_flight = flight_results[0]
     outbound = _normalize_string(first_flight.get("outbound_datetime"))
     inbound = _normalize_string(first_flight.get("inbound_datetime"))
-    return _extract_iso_date(outbound), _extract_iso_date(inbound)
+    check_in = _extract_iso_date(outbound)
+    check_out = _extract_iso_date(inbound)
+    if check_in and not check_out:
+        try:
+            check_out = (date.fromisoformat(check_in) + timedelta(days=DEFAULT_STAY_DAYS)).isoformat()
+        except ValueError:
+            return check_in, None
+    return check_in, check_out
 
 
 def _extract_iso_date(datetime_value: str | None) -> str | None:
