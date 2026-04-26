@@ -14,6 +14,8 @@ from core.state import IntentStruct
 
 
 class TripPlannerHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
     def __init__(self, server_address, handler_class, app: TripPlannerApp) -> None:
         self.app = app
         super().__init__(server_address, handler_class)

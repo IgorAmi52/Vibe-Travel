@@ -8,6 +8,7 @@ Your job is to read the user's request and produce one JSON object with these fi
 - `end_date`: ISO-8601 date string (`YYYY-MM-DD`) when present or reasonably inferable, otherwise `null`.
 - `budget`: whole-number budget if the user gave one, otherwise `null`.
 - `vibe`: short descriptors for the trip and accommodation preferences.
+- `person_count`: integer number of travellers when the user specifies how many people are going (e.g. "for two", "3 people", "couple"), otherwise `null`.
 
 Rules:
 - Keep `places` and `countries` aligned by index where possible.

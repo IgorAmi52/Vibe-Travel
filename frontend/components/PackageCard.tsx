@@ -1,6 +1,6 @@
 import Image from "next/image";
 import { formatMoney } from "@/lib/formatMoney";
-import type { FlightLeg, PackageCardViewModel } from "@/lib/types";
+import type { FlightLeg, FlightResult, PackageCardViewModel } from "@/lib/types";
 
 type PackageCardProps = {
   pkg: PackageCardViewModel;
@@ -8,9 +8,16 @@ type PackageCardProps = {
 };
 
 export function PackageCard({ pkg, rankLabel }: PackageCardProps) {
-  const { flight, accommodation, tags } = pkg;
-  const totalPkg = flight.totalPrice + accommodation.totalPrice;
-  const perPerson = flight.pricePerPerson + accommodation.pricePerPerson;
+  const { flight, accommodation, tags, alternativeFlights } = pkg;
+  const bestPP = flight.pricePerPerson + accommodation.pricePerPerson;
+  const bestTotal = flight.totalPrice + accommodation.totalPrice;
+
+  const stayLabel = [
+    accommodation.nights > 0 ? `${accommodation.nights} nights` : null,
+    accommodation.providerName || null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <article className="group overflow-hidden rounded-ss border border-slate-200 bg-white shadow-sm transition-shadow duration-200 hover:shadow-md">
@@ -31,13 +38,19 @@ export function PackageCard({ pkg, rankLabel }: PackageCardProps) {
           )}
         </div>
 
-        {/* Details */}
-        <div className="flex min-w-0 flex-1 flex-col p-3 sm:p-4">
-          {/* Hotel header row */}
-          <div className="flex items-start justify-between gap-3">
+        {/* Right content */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Hotel info + price */}
+          <div className="flex items-start justify-between gap-3 p-3 pb-2 sm:p-4 sm:pb-2">
             <div className="min-w-0">
               <h2 className="truncate text-[15px] font-bold leading-tight text-ss-navy">
-                {accommodation.name}
+                {accommodation.dealUrl ? (
+                  <a href={accommodation.dealUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                    {accommodation.name}
+                  </a>
+                ) : (
+                  accommodation.name
+                )}
               </h2>
               <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
                 {accommodation.starRating > 0 && (
@@ -58,23 +71,24 @@ export function PackageCard({ pkg, rankLabel }: PackageCardProps) {
                     </span>
                   </span>
                 )}
+                {stayLabel && (
+                  <span className="text-slate-400">{stayLabel}</span>
+                )}
               </div>
             </div>
 
-            {/* Price block - right aligned */}
             <div className="shrink-0 text-right">
-              <p className="text-xl font-bold leading-tight text-ss-navy">
-                {formatMoney(perPerson, flight.currency)}
+              <p className="text-lg font-bold leading-tight text-ss-navy">
+                from {formatMoney(bestPP, flight.currency)}
               </p>
-              <p className="text-[11px] text-slate-500">per person</p>
               <p className="text-[10px] text-slate-400">
-                Total {formatMoney(totalPkg, flight.currency)}
+                pp · Total {formatMoney(bestTotal, flight.currency)}
               </p>
             </div>
           </div>
 
-          {/* Tags + selling points in one row */}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {/* Tags + selling points */}
+          <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2 sm:px-4">
             {tags.map((t) => (
               <span
                 key={t}
@@ -95,37 +109,65 @@ export function PackageCard({ pkg, rankLabel }: PackageCardProps) {
             ))}
           </div>
 
-          {/* Flights - compact inline */}
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-[12px] text-slate-600">
-            <CompactFlight label="Out" leg={flight.outbound} />
-            <CompactFlight label="Ret" leg={flight.inbound} />
-            <span className="text-slate-400">
-              {accommodation.nights > 0
-                ? `${accommodation.nights} nights`
-                : "Dates TBC"}{" "}
-              · {accommodation.providerName || "Flight + stay"}
-            </span>
+          {/* Flight options — uniform rows */}
+          <div className="border-t border-slate-100">
+            <FlightRow flight={flight} highlight />
+            {alternativeFlights?.map((alt, i) => (
+              <FlightRow key={`alt-${i}`} flight={alt} />
+            ))}
           </div>
-        </div>
-
-        {/* CTA strip */}
-        <div className="flex items-center border-t border-slate-100 p-3 sm:w-[120px] sm:border-l sm:border-t-0">
-          <button
-            type="button"
-            className="w-full rounded-ss bg-ss-navy py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-ss-navy-light"
-          >
-            View deal
-          </button>
         </div>
       </div>
     </article>
   );
 }
 
-function CompactFlight({ label, leg }: { label: string; leg: FlightLeg }) {
+function FlightRow({
+  flight,
+  highlight,
+}: {
+  flight: FlightResult;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-x-3 px-3 py-1.5 text-[12px] sm:px-4 ${
+        highlight
+          ? "bg-slate-50/60 text-slate-700"
+          : "border-t border-dashed border-slate-100 text-slate-500"
+      }`}
+    >
+      <CompactFlight leg={flight.outbound} />
+      <CompactFlight leg={flight.inbound} />
+      <span className="ml-auto whitespace-nowrap font-bold text-ss-navy">
+        {formatMoney(flight.pricePerPerson, flight.currency)}
+        <span className="ml-0.5 font-normal text-slate-400">pp</span>
+      </span>
+      <span className="hidden whitespace-nowrap text-[10px] text-slate-400 sm:inline">
+        Total {formatMoney(flight.totalPrice, flight.currency)}
+      </span>
+      <a
+        href={flight.dealUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`shrink-0 rounded-ss px-3 py-1 text-center text-[11px] font-bold no-underline transition ${
+          highlight
+            ? "bg-ss-navy text-white shadow-sm hover:bg-ss-navy-light"
+            : "border border-ss-navy text-ss-navy hover:bg-ss-navy hover:text-white"
+        }`}
+      >
+        View deal
+      </a>
+    </div>
+  );
+}
+
+function CompactFlight({ leg }: { leg: FlightLeg }) {
   return (
     <span className="inline-flex items-center gap-1">
-      <span className="font-bold uppercase text-slate-400">{label}</span>
+      <span className="w-[70px] text-[11px] font-semibold text-slate-500">
+        {leg.dateLabel || "TBC"}
+      </span>
       {leg.airlineCode && (
         <span className="rounded border border-slate-200 px-1 py-px text-[10px] font-bold text-ss-navy">
           {leg.airlineCode}

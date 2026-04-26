@@ -15,11 +15,10 @@ export function ResultsLayout({
 }: ResultsLayoutProps) {
   return (
     <div className="mx-auto max-w-[1100px] px-4 pb-6 pt-2 md:px-6 md:pb-8 md:pt-3">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-4">
         <p className="text-sm font-bold text-ss-navy">
           {loading ? "…" : `${packages.length} results`}
         </p>
-        <p className="text-xs text-slate-500">Additional baggage fees may apply</p>
       </div>
       {loading ? (
         <ResultsLoadingState statusMessage={statusMessage} />

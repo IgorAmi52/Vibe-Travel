@@ -21,12 +21,15 @@ class ExtractIntentNode:
         if isinstance(explicit_trip_intent, dict):
             merged_payload.update(_clean_payload(explicit_trip_intent))
         trip_intent = IntentStruct.from_dict(merged_payload)
-        return {
+        result: Dict[str, Any] = {
             "trip_intent": trip_intent.to_dict(),
             "budget": trip_intent.budget,
             "status": "intent_ready",
             "next_step": "search_flights",
         }
+        if trip_intent.person_count is not None:
+            result["person_count"] = trip_intent.person_count
+        return result
 
 
 def _clean_payload(payload: Dict[str, Any]) -> Dict[str, Any]:

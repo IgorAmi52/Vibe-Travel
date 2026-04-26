@@ -15,6 +15,59 @@ import type {
 const FALLBACK_IMAGE =
   "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=600&q=80";
 
+function buildSkyscannerUrl(
+  originIata: string,
+  destIata: string,
+  outDate: string | null | undefined,
+  inDate: string | null | undefined,
+  adults: number = 1,
+): string {
+  const o = originIata.toLowerCase();
+  const d = destIata.toLowerCase();
+  const dep = outDate ? toYYMMDD(outDate) : "";
+  const ret = inDate ? toYYMMDD(inDate) : "";
+  const params = new URLSearchParams();
+  if (adults > 1) params.set("adults", String(adults));
+  const qs = params.toString();
+  const suffix = qs ? `?${qs}` : "";
+  if (dep && ret) {
+    return `https://www.skyscanner.net/transport/flights/${o}/${d}/${dep}/${ret}/${suffix}`;
+  }
+  if (dep) {
+    return `https://www.skyscanner.net/transport/flights/${o}/${d}/${dep}/${suffix}`;
+  }
+  return `https://www.skyscanner.net/transport/flights/${o}/${d}/${suffix}`;
+}
+
+function buildBookingUrl(
+  hotelName: string,
+  checkin: string | null | undefined,
+  checkout: string | null | undefined,
+  adults: number = 1,
+): string {
+  const params = new URLSearchParams();
+  params.set("ss", hotelName);
+  if (checkin) params.set("checkin", toYYYYMMDD(checkin));
+  if (checkout) params.set("checkout", toYYYYMMDD(checkout));
+  if (adults > 1) params.set("group_adults", String(adults));
+  return `https://www.booking.com/searchresults.html?${params.toString()}`;
+}
+
+function toYYMMDD(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr.replace(/-/g, "").slice(2);
+  const y = String(d.getFullYear()).slice(2);
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}${m}${day}`;
+}
+
+function toYYYYMMDD(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toISOString().slice(0, 10);
+}
+
 function normalizeCurrency(raw: string | null | undefined): string {
   if (!raw) return "EUR";
   if (raw.startsWith("PRICE_UNIT")) return "EUR";
@@ -43,6 +96,13 @@ function formatTime(datetime: string | null | undefined): string {
   return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatDateLabel(datetime: string | null | undefined): string {
+  if (!datetime) return "";
+  const d = new Date(datetime);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
 function mapLeg(
   leg: InvokeFlightLeg | undefined,
   fallbackOrigin: { iata: string; name: string },
@@ -60,14 +120,16 @@ function mapLeg(
     const airlineCode = typeof carrier === "object" && carrier !== null
       ? (carrier as Record<string, string>).display_code ?? (carrier as Record<string, string>).iata ?? ""
       : String(carrier ?? "");
+    const dt = leg.datetime ?? fallbackDatetime;
     return {
-      depTime: formatTime(leg.datetime ?? fallbackDatetime),
-      arrTime: formatTime(leg.datetime ?? fallbackDatetime),
+      depTime: formatTime(dt),
+      arrTime: formatTime(dt),
       depCode: orig.iata,
       arrCode: dest.iata,
       airline: airlineName,
       airlineCode,
       stopsLabel: leg.is_direct ?? isDirect ? "Direct" : "1+ stops",
+      dateLabel: formatDateLabel(dt),
     };
   }
   return {
@@ -78,6 +140,7 @@ function mapLeg(
     airline: "",
     airlineCode: "",
     stopsLabel: isDirect ? "Direct" : "1+ stops",
+    dateLabel: formatDateLabel(fallbackDatetime),
   };
 }
 
@@ -113,6 +176,7 @@ function mapFlight(
     pricePerPerson: personCount > 0 ? totalPrice / personCount : totalPrice,
     totalPrice,
     currency,
+    dealUrl: buildSkyscannerUrl(origin.iata, dest.iata, f.outbound_datetime, f.inbound_datetime, personCount),
   };
 }
 
@@ -148,6 +212,12 @@ function mapAccommodation(
     providerName: "Booking.com",
     imageUrl: h.images?.[0] ?? FALLBACK_IMAGE,
     sellingPoints: amenities.slice(0, 3),
+    dealUrl: buildBookingUrl(
+      h.name,
+      tripIntent?.start_date,
+      tripIntent?.end_date,
+      personCount,
+    ),
   };
 }
 
@@ -189,6 +259,7 @@ function mapFlightOnlyCard(
     airline: "",
     airlineCode: "",
     stopsLabel: fr.is_direct ? "Direct" : "1+ stops",
+    dateLabel: formatDateLabel(fr.outbound_datetime),
   };
 
   const flight: FlightResult = {
@@ -201,6 +272,7 @@ function mapFlightOnlyCard(
     pricePerPerson: personCount > 0 ? totalPrice / personCount : totalPrice,
     totalPrice,
     currency,
+    dealUrl: buildSkyscannerUrl(origin.iata, dest.iata, fr.outbound_datetime, null, personCount),
   };
 
   const accommodation: AccommodationResult = {
@@ -217,6 +289,7 @@ function mapFlightOnlyCard(
     providerName: "",
     imageUrl: FALLBACK_IMAGE,
     sellingPoints: ["Indicative flight price", "Add dates to see hotels"],
+    dealUrl: "",
   };
 
   return {
@@ -279,6 +352,9 @@ function buildIntentChips(intent?: InvokeTripIntent): string[] {
     chips.push(`From ${intent.start_date}`);
   }
   if (intent.budget) chips.push(`€${intent.budget} budget`);
+  if (intent.person_count && intent.person_count > 1) {
+    chips.push(`${intent.person_count} travellers`);
+  }
   return chips;
 }
 
@@ -291,9 +367,28 @@ export function mapInvokeToSnapshot(response: InvokeResponse): SessionSnapshot {
   const grouped = state.grouped_results ?? [];
 
   if (grouped.length > 0) {
-    packages = grouped.map((item) =>
+    const all = grouped.map((item) =>
       mapGroupedResult(item, intent, personCount),
     );
+    const byHotel = new Map<string, PackageCardViewModel>();
+    for (const pkg of all) {
+      const key = pkg.accommodation.name;
+      const existing = byHotel.get(key);
+      if (!existing) {
+        byHotel.set(key, pkg);
+      } else {
+        const existingTotal = existing.flight.totalPrice + existing.accommodation.totalPrice;
+        const newTotal = pkg.flight.totalPrice + pkg.accommodation.totalPrice;
+        if (!existing.alternativeFlights) existing.alternativeFlights = [];
+        if (newTotal < existingTotal) {
+          existing.alternativeFlights.push(existing.flight);
+          existing.flight = pkg.flight;
+        } else {
+          existing.alternativeFlights.push(pkg.flight);
+        }
+      }
+    }
+    packages = [...byHotel.values()];
   } else if (state.flight_results?.length > 0) {
     packages = state.flight_results.map((fr, i) =>
       mapFlightOnlyCard(fr, i, personCount),

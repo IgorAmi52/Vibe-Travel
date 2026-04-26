@@ -11,6 +11,7 @@ export interface FlightLeg {
   airline: string;
   airlineCode: string;
   stopsLabel: string;
+  dateLabel: string;
 }
 
 export interface FlightResult {
@@ -23,6 +24,7 @@ export interface FlightResult {
   pricePerPerson: number;
   totalPrice: number;
   currency: string;
+  dealUrl: string;
 }
 
 export interface AccommodationResult {
@@ -39,6 +41,7 @@ export interface AccommodationResult {
   providerName: string;
   imageUrl: string;
   sellingPoints: string[];
+  dealUrl: string;
 }
 
 export interface PackageResultV0 {
@@ -52,6 +55,7 @@ export interface PackageCardViewModel {
   tags: string[];
   flight: FlightResult;
   accommodation: AccommodationResult;
+  alternativeFlights?: FlightResult[];
 }
 
 export interface SessionSnapshot {
@@ -75,6 +79,7 @@ export interface InvokeTripIntent {
   end_date: string | null;
   budget: number | null;
   vibe: string | string[] | null;
+  person_count: number | null;
 }
 
 export interface InvokeAirport {

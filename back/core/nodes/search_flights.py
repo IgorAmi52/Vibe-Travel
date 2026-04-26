@@ -110,8 +110,10 @@ class SearchFlightsNode:
                     ),
                 }
 
+            scaled_quotes = _scale_flight_prices(quotes, person_count)
+
             return {
-                "flight_results": quotes,
+                "flight_results": scaled_quotes,
                 "hotel_results": [],
                 "grouped_results": [],
                 "origin_iata": origin_iata,
@@ -146,3 +148,23 @@ def _normalize_search_value(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _scale_flight_prices(quotes: List[Dict[str, Any]], person_count: int) -> List[Dict[str, Any]]:
+    """Skyscanner indicative prices are per-person; scale to total for the group."""
+    if person_count <= 1:
+        return quotes
+    scaled: List[Dict[str, Any]] = []
+    for q in quotes:
+        q = dict(q)
+        price = q.get("price")
+        if isinstance(price, dict) and price.get("amount") is not None:
+            q["price"] = {**price, "amount": float(price["amount"]) * person_count}
+        for leg_key in ("outbound", "inbound"):
+            leg = q.get(leg_key)
+            if isinstance(leg, dict):
+                leg_price = leg.get("price")
+                if isinstance(leg_price, dict) and leg_price.get("amount") is not None:
+                    q[leg_key] = {**leg, "price": {**leg_price, "amount": float(leg_price["amount"]) * person_count}}
+        scaled.append(q)
+    return scaled
