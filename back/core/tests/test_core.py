@@ -152,7 +152,7 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(captured["config"]["response_mime_type"], "application/json")
         self.assertEqual(
             captured["config"]["response_json_schema"]["required"],
-            ["places", "countries", "start_date", "end_date", "budget", "vibe"],
+            ["places", "countries", "start_date", "end_date", "budget", "vibe", "person_count"],
         )
         self.assertIn("User request:", captured["contents"])
 
@@ -664,8 +664,10 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(result["destination_place"], "Chamonix")
         self.assertEqual(result["destination_iata"], "GVA")
         self.assertEqual(result["next_step"], "search_hotels")
-        self.assertEqual(len(provider.calls), 3)
-        self.assertEqual([call["destination_iata"] for call in provider.calls], ["GVA", "ZRH", "BRN"])
+        outbound_destinations = [
+            call["destination_iata"] for call in provider.calls if call["origin_iata"] == "BCN"
+        ]
+        self.assertEqual(outbound_destinations, ["GVA", "ZRH", "BRN"])
         self.assertEqual(
             [item["destination_place"] for item in result["flight_results"]],
             ["Chamonix", "Zermatt", "Grindelwald"],

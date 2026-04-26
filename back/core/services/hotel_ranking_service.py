@@ -55,17 +55,15 @@ class HotelRankingService:
         entity_id, search_type = await self._resolve_destination_entity(destination)
 
         search_results = await self._hotel_api.indicative_search(
-            entity_id=resolved_destination.entity_id,
+            entity_id=entity_id,
             check_in=check_in,
             check_out=check_out,
-            search_type=resolved_destination.dest_type or "city",
             currency=currency,
             search_type=search_type,
         )
         if not search_results:
             raise ValueError(
-                "No hotels found for "
-                f"'{destination}' (entity={resolved_destination.entity_id}, type={resolved_destination.dest_type})"
+                f"No hotels found for '{destination}' (entity={entity_id}, type={search_type})"
             )
 
         # Booking.com's searchHotels still returns properties that have no

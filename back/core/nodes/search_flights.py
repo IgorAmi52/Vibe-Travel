@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
@@ -8,6 +9,8 @@ from core.flights import (
     FlightChainService,
 )
 from core.state import TripPlannerGraphState
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -72,23 +75,13 @@ class SearchFlightsNode:
             primary_place = resolved_destinations[0][0] if resolved_destinations else destination_place
             primary_iata = resolved_destinations[0][1] if resolved_destinations else destination_iata
             has_full_dates = bool(departure_date_str and return_date_str)
+            quotes: List[Dict[str, Any]] = []
+            search_errors: List[str] = []
             try:
-                if destination_iata:
-                    # Always query both directions for a known destination so both
-                    # outbound and inbound legs carry dates (avoids "TBC" return).
-                    quotes = list(
-                        await self.flight_service.get_indicative_roundtrip(
-                            origin_iata=origin_iata,
-                            destination_iata=destination_iata,
-                            departure_date=departure_date_str,
-                            return_date=return_date_str,
-                            limit=self.limit,
-                        )
-                    )
-                else:
+                if anywhere_search:
                     indicative = await self.flight_service.get_indicative_anywhere(
                         origin_iata=origin_iata,
-                        destination_iata=destination_iata,
+                        destination_iata=None,
                         outbound_date=departure_date_str,
                         return_date=return_date_str,
                     )
@@ -105,6 +98,39 @@ class SearchFlightsNode:
                             ),
                         }
                     quotes = list(indicative.get("quotes") or [])
+                else:
+                    # Fan out across every resolved destination so the user sees
+                    # options for all places they mentioned, not just the first
+                    # one we managed to map to an IATA. Always use roundtrip so
+                    # both outbound and inbound legs carry dates.
+                    for place_name, place_iata in resolved_destinations:
+                        try:
+                            destination_quotes = list(
+                                await self.flight_service.get_indicative_roundtrip(
+                                    origin_iata=origin_iata,
+                                    destination_iata=place_iata,
+                                    departure_date=departure_date_str,
+                                    return_date=return_date_str,
+                                    limit=self.limit,
+                                )
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Roundtrip search failed for %s (%s): %s",
+                                place_name,
+                                place_iata,
+                                exc,
+                            )
+                            search_errors.append(f"{place_name}: {exc}")
+                            continue
+                        for quote in destination_quotes:
+                            quotes.append(
+                                {
+                                    **quote,
+                                    "destination_place": place_name,
+                                    "destination_iata": place_iata,
+                                }
+                            )
             except Exception as exc:
                 return {
                     "hotel_results": [],
@@ -119,16 +145,24 @@ class SearchFlightsNode:
                 }
 
             if not quotes:
+                if search_errors:
+                    error_summary = "; ".join(search_errors)
+                    prompt = (
+                        f"Indicative flight search failed for every destination ({error_summary}). "
+                        "Could you check your dates or try a different destination?"
+                    )
+                else:
+                    prompt = (
+                        "No indicative destinations found for your search. "
+                        "Could you try different dates or a nearby airport?"
+                    )
                 return {
                     "hotel_results": [],
                     "grouped_results": [],
                     "status": "needs_clarification",
                     "next_step": "search_flights",
                     "needs_clarification": True,
-                    "clarification_prompt": (
-                        "No indicative destinations found for your search. "
-                        "Could you try different dates or a nearby airport?"
-                    ),
+                    "clarification_prompt": prompt,
                 }
 
             scaled_quotes = _scale_flight_prices(quotes, person_count)
@@ -151,13 +185,6 @@ class SearchFlightsNode:
 
     async def _resolve_iata(self, search_term: str) -> str | None:
         return await self.flight_service.resolve_iata_code(search_term)
-
-    async def _resolve_first_iata(self, places: List[str]) -> tuple[str | None, str | None]:
-        for place in places:
-            resolved_iata = await self._resolve_iata(place)
-            if resolved_iata:
-                return resolved_iata, place
-        return None, None
 
     async def _resolve_destinations(
         self,
