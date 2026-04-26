@@ -117,7 +117,7 @@ class BookingComClient(HotelApiClient):
 
         return parse_description(response.json())
 
-    async def get_reviews(self, hotel_id: str, limit: int = 30) -> list[HotelReview]:
+    async def get_reviews(self, hotel_id: str, limit: int = 15) -> list[HotelReview]:
         all_reviews: list[HotelReview] = []
         page = 0
 
