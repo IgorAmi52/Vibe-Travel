@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from core.state import TripPlannerGraphState
 
@@ -10,7 +10,7 @@ from core.state import TripPlannerGraphState
 class GroupResultsNode:
     flight_limit: int = 3
     hotel_limit: int = 3
-    option_limit: int = 9
+    option_limit: Optional[int] = None
 
     def __call__(self, state: TripPlannerGraphState) -> Dict[str, Any]:
         flights = list(state.get("flight_results") or [])
@@ -27,36 +27,49 @@ class GroupResultsNode:
         budget = _extract_budget(state)
         grouped_results: List[Dict[str, Any]] = []
         option_index = 1
-        for flight in flights[: self.flight_limit]:
-            for hotel in hotels[: self.hotel_limit]:
-                total_amount = _sum_prices(
-                    _extract_price_amount(flight.get("price")),
-                    _extract_price_amount(hotel.get("price")),
-                )
-                within_budget = budget is None or (
-                    total_amount is not None and total_amount <= float(budget)
-                )
-                grouped_results.append(
-                    {
-                        "option_id": f"option_{option_index}",
-                        "destination": {
-                            "place": destination_place,
-                            "iata": destination_iata,
-                        },
-                        "flight": flight,
-                        "hotel": hotel,
-                        "within_budget": within_budget,
-                        "price_summary": {
-                            "flight_amount": _extract_price_amount(flight.get("price")),
-                            "hotel_amount": _extract_price_amount(hotel.get("price")),
-                            "total_amount": total_amount,
-                            "currency": _extract_currency(flight.get("price"))
-                            or _extract_currency(hotel.get("price")),
-                            "budget": float(budget) if budget is not None else None,
-                        },
-                    }
-                )
-                option_index += 1
+        for destination in _group_destinations(flights, hotels, destination_place):
+            destination_flights = [
+                flight for flight in flights
+                if _normalize_string(flight.get("destination_place")) == destination
+            ][: self.flight_limit]
+            destination_hotels = [
+                hotel for hotel in hotels
+                if _normalize_string(hotel.get("destination_place")) == destination
+            ][: self.hotel_limit]
+
+            if not destination_flights or not destination_hotels:
+                continue
+
+            for flight in destination_flights:
+                for hotel in destination_hotels:
+                    total_amount = _sum_prices(
+                        _extract_price_amount(flight.get("price")),
+                        _extract_price_amount(hotel.get("price")),
+                    )
+                    within_budget = budget is None or (
+                        total_amount is not None and total_amount <= float(budget)
+                    )
+                    grouped_results.append(
+                        {
+                            "option_id": f"option_{option_index}",
+                            "destination": {
+                                "place": destination,
+                                "iata": _normalize_string(flight.get("destination_iata")) or destination_iata,
+                            },
+                            "flight": flight,
+                            "hotel": hotel,
+                            "within_budget": within_budget,
+                            "price_summary": {
+                                "flight_amount": _extract_price_amount(flight.get("price")),
+                                "hotel_amount": _extract_price_amount(hotel.get("price")),
+                                "total_amount": total_amount,
+                                "currency": _extract_currency(flight.get("price"))
+                                or _extract_currency(hotel.get("price")),
+                                "budget": float(budget) if budget is not None else None,
+                            },
+                        }
+                    )
+                    option_index += 1
 
         grouped_results.sort(
             key=lambda item: (
@@ -85,7 +98,7 @@ class GroupResultsNode:
         return {
             "flight_results": [],
             "hotel_results": [],
-            "grouped_results": grouped_results[: self.option_limit],
+            "grouped_results": grouped_results[: self.option_limit] if self.option_limit else grouped_results,
             "status": "travel_options_ready",
             "next_step": None,
         }
@@ -114,6 +127,28 @@ def _sum_prices(left: float | None, right: float | None) -> float | None:
     if left is None and right is None:
         return None
     return float(left or 0.0) + float(right or 0.0)
+
+
+def _group_destinations(
+    flights: list[dict[str, Any]],
+    hotels: list[dict[str, Any]],
+    fallback_destination: str | None,
+) -> list[str]:
+    destinations: list[str] = []
+    for item in flights + hotels:
+        destination = _normalize_string(item.get("destination_place"))
+        if destination and destination not in destinations:
+            destinations.append(destination)
+    if not destinations and fallback_destination:
+        return [fallback_destination]
+    return destinations
+
+
+def _normalize_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
 
 
 def _extract_budget(state: TripPlannerGraphState) -> int | None:

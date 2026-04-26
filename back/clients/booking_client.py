@@ -13,7 +13,6 @@ from core.models.hotel import Destination, HotelContent, HotelReview, HotelSearc
 
 logger = logging.getLogger(__name__)
 
-SEARCH_TYPE_CITY = "city"
 REVIEW_SORT_MOST_RELEVANT = "SORT_MOST_RELEVANT"
 _AUTH_ERROR_CODES = {401, 403, 429}
 
@@ -52,11 +51,12 @@ class BookingComClient(HotelApiClient):
         entity_id: str,
         check_in: date,
         check_out: date,
+        search_type: str = "city",
         currency: str = "USD",
     ) -> list[HotelSearchResult]:
         params = {
             "dest_id": entity_id,
-            "search_type": SEARCH_TYPE_CITY,
+            "search_type": search_type or "city",
             "arrival_date": check_in.isoformat(),
             "departure_date": check_out.isoformat(),
             "adults": 2,

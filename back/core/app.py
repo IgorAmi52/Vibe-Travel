@@ -120,6 +120,8 @@ class TripPlannerApp:
         )
 
     def _create_hotel_ranking_service(self) -> HotelRankingService:
+        if not self.config.gemini_api_key:
+            raise ValueError("GEMINI_API_KEY is required for hotel ranking.")
         connector = ApiConnector(
             base_url=self.config.booking_base_url,
             headers={
