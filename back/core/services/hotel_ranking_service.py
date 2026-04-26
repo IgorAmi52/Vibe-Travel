@@ -64,11 +64,32 @@ class HotelRankingService:
         if not search_results:
             raise ValueError(f"No hotels found for '{destination}' (entity={entity_id})")
 
-        hotel_ids = [h.hotel_id for h in search_results]
-        logger.info("Found %d hotels for entity '%s'", len(hotel_ids), entity_id)
+        # Booking.com's searchHotels still returns properties that have no
+        # availability for the requested window (priceBreakdown.grossPrice is
+        # null). Including them produces deal links that land on a "no
+        # availability for these dates" page, which is bad UX. Drop them here
+        # so the user only sees genuinely bookable options.
+        bookable_results = [r for r in search_results if r.price is not None]
+        dropped = len(search_results) - len(bookable_results)
+        if dropped:
+            logger.info(
+                "Dropped %d/%d hotels with no availability for %s → %s",
+                dropped,
+                len(search_results),
+                check_in.isoformat(),
+                check_out.isoformat(),
+            )
+        if not bookable_results:
+            raise ValueError(
+                f"No hotels with availability for '{destination}' "
+                f"between {check_in.isoformat()} and {check_out.isoformat()}"
+            )
+
+        hotel_ids = [h.hotel_id for h in bookable_results]
+        logger.info("Found %d bookable hotels for entity '%s'", len(hotel_ids), entity_id)
 
         contents, descriptions, reviews_by_hotel = await self._fetch_hotel_data(hotel_ids)
-        hotels = self._build_hotels(search_results, contents, descriptions, reviews_by_hotel)
+        hotels = self._build_hotels(bookable_results, contents, descriptions, reviews_by_hotel)
         similarities = await self._compute_similarities(vibe_query, hotels)
 
         return self._score_and_rank(hotels, similarities)

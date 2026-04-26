@@ -27,7 +27,17 @@ function buildSkyscannerUrl(
   const dep = outDate ? toYYMMDD(outDate) : "";
   const ret = inDate ? toYYMMDD(inDate) : "";
   const params = new URLSearchParams();
-  if (adults > 1) params.set("adults", String(adults));
+  // Skyscanner's web search reads `adultsv2` (the newer param). `adults`
+  // alone gets ignored on /transport/flights/, which is why deep-linked
+  // results were always shown for one traveller.
+  const safeAdults = Math.max(1, Math.floor(adults));
+  params.set("adultsv2", String(safeAdults));
+  params.set("adults", String(safeAdults));
+  params.set("children", "0");
+  params.set("childrenv2", "");
+  params.set("infants", "0");
+  params.set("cabinclass", "economy");
+  params.set("rtn", dep && ret ? "1" : "0");
   const qs = params.toString();
   const suffix = qs ? `?${qs}` : "";
   if (dep && ret) {
@@ -41,15 +51,24 @@ function buildSkyscannerUrl(
 
 function buildBookingUrl(
   hotelName: string,
+  hotelId: string | null | undefined,
   checkin: string | null | undefined,
   checkout: string | null | undefined,
   adults: number = 1,
 ): string {
   const params = new URLSearchParams();
   params.set("ss", hotelName);
+  // Disambiguate to the exact property: Booking.com routes
+  // dest_type=hotel + dest_id=<id> straight to that hotel's page, so we
+  // never land on a wrong-name match or a generic results listing.
+  if (hotelId) {
+    params.set("dest_type", "hotel");
+    params.set("dest_id", hotelId);
+  }
   if (checkin) params.set("checkin", toYYYYMMDD(checkin));
   if (checkout) params.set("checkout", toYYYYMMDD(checkout));
   if (adults > 1) params.set("group_adults", String(adults));
+  params.set("no_rooms", "1");
   return `https://www.booking.com/searchresults.html?${params.toString()}`;
 }
 
@@ -214,7 +233,7 @@ function mapAccommodation(
     providerName: "Booking.com",
     imageUrl: h.images?.[0] ?? FALLBACK_IMAGE,
     sellingPoints: amenities.slice(0, 3),
-    dealUrl: buildBookingUrl(h.name, checkin, checkout, personCount),
+    dealUrl: buildBookingUrl(h.name, h.hotel_id, checkin, checkout, personCount),
   };
 }
 
