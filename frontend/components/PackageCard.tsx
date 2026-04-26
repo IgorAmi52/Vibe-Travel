@@ -79,10 +79,10 @@ export function PackageCard({ pkg, rankLabel }: PackageCardProps) {
 
             <div className="shrink-0 text-right">
               <p className="text-lg font-bold leading-tight text-ss-navy">
-                from {formatMoney(bestPP, flight.currency)}
+                from {formatMoney(bestTotal, flight.currency)}
               </p>
               <p className="text-[10px] text-slate-400">
-                pp · Total {formatMoney(bestTotal, flight.currency)}
+                total · {formatMoney(bestPP, flight.currency)} pp
               </p>
             </div>
           </div>
@@ -139,12 +139,13 @@ function FlightRow({
     >
       <CompactFlight leg={flight.outbound} />
       <CompactFlight leg={flight.inbound} />
-      <span className="ml-auto whitespace-nowrap font-bold text-ss-navy">
-        {formatMoney(flight.pricePerPerson, flight.currency)}
-        <span className="ml-0.5 font-normal text-slate-400">pp</span>
-      </span>
-      <span className="hidden whitespace-nowrap text-[10px] text-slate-400 sm:inline">
-        Total {formatMoney(flight.totalPrice, flight.currency)}
+      <span className="ml-auto flex flex-col items-end leading-tight">
+        <span className="whitespace-nowrap font-bold text-ss-navy">
+          {formatMoney(flight.totalPrice, flight.currency)}
+        </span>
+        <span className="hidden whitespace-nowrap text-[10px] text-slate-400 sm:inline">
+          {formatMoney(flight.pricePerPerson, flight.currency)} pp
+        </span>
       </span>
       <a
         href={flight.dealUrl}
