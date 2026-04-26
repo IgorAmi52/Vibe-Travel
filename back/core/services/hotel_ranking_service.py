@@ -15,6 +15,15 @@ DEFAULT_VIBE_WEIGHT = 0.6
 DEFAULT_PRICE_WEIGHT = 0.2
 DEFAULT_RATING_WEIGHT = 0.2
 MAX_REVIEWS_TO_FETCH = 15
+# Destination types Booking.com supports for hotel search, ordered by how well
+# they typically match a user-facing place name (cities are tightest scope).
+_ACCEPTED_DESTINATION_TYPES: tuple[str, ...] = (
+    "city",
+    "region",
+    "district",
+    "landmark",
+    "country",
+)
 
 
 class HotelRankingService:
@@ -43,13 +52,14 @@ class HotelRankingService:
         check_out: date,
         currency: str = "USD",
     ) -> list[ScoredHotel]:
-        entity_id = await self._resolve_city_entity(destination)
+        entity_id, search_type = await self._resolve_destination_entity(destination)
 
         search_results = await self._hotel_api.indicative_search(
             entity_id=entity_id,
             check_in=check_in,
             check_out=check_out,
             currency=currency,
+            search_type=search_type,
         )
         if not search_results:
             raise ValueError(f"No hotels found for '{destination}' (entity={entity_id})")
@@ -63,20 +73,31 @@ class HotelRankingService:
 
         return self._score_and_rank(hotels, similarities)
 
-    async def _resolve_city_entity(self, destination: str) -> str:
+    async def _resolve_destination_entity(self, destination: str) -> tuple[str, str]:
         destinations = await self._hotel_api.autosuggest(destination)
         if not destinations:
             raise ValueError(f"No destinations found for '{destination}'")
 
-        city = next((d for d in destinations if d.dest_type == "city"), None)
-        if not city:
+        match = None
+        for accepted_type in _ACCEPTED_DESTINATION_TYPES:
+            match = next((d for d in destinations if d.dest_type == accepted_type), None)
+            if match:
+                break
+
+        if not match:
             raise ValueError(
-                f"No city-level destination found for '{destination}'. "
+                f"No usable destination found for '{destination}'. "
                 f"Got: {[(d.name, d.dest_type) for d in destinations]}"
             )
 
-        logger.info("Resolved '%s' → %s (entity=%s)", destination, city.name, city.entity_id)
-        return city.entity_id
+        logger.info(
+            "Resolved '%s' → %s (entity=%s, type=%s)",
+            destination,
+            match.name,
+            match.entity_id,
+            match.dest_type,
+        )
+        return match.entity_id, match.dest_type
 
     async def _fetch_hotel_data(
         self, hotel_ids: list[str],

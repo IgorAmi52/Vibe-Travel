@@ -54,7 +54,9 @@ class SearchFlightsNode:
 
             has_full_dates = bool(destination_iata and departure_date_str and return_date_str)
             try:
-                if has_full_dates:
+                if destination_iata:
+                    # Always query both directions for a known destination so both
+                    # outbound and inbound legs carry dates (avoids "TBC" return).
                     quotes = list(
                         await self.flight_service.get_indicative_roundtrip(
                             origin_iata=origin_iata,

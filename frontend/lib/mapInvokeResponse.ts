@@ -193,16 +193,18 @@ function mapAccommodation(
   const rawRating = h.guest_rating ?? 0;
   const scaledRating = rawRating > 5 ? Math.round((rawRating / 2) * 10) / 10 : rawRating;
 
+  const checkin =
+    tripIntent?.start_date ?? item.flight.outbound_datetime ?? null;
+  const checkout =
+    tripIntent?.end_date ?? item.flight.inbound_datetime ?? null;
+
   return {
     name: h.name,
     starRating: h.star_rating ?? 0,
     reviewScore: scaledRating,
     reviewLabel: reviewLabel(rawRating),
     locationLabel: item.destination.place ?? "",
-    nights: nightsBetween(
-      tripIntent?.start_date ?? null,
-      tripIntent?.end_date ?? null,
-    ),
+    nights: nightsBetween(checkin, checkout),
     breakfastIncluded: amenities.some((a) =>
       a.toLowerCase().includes("breakfast"),
     ),
@@ -212,12 +214,7 @@ function mapAccommodation(
     providerName: "Booking.com",
     imageUrl: h.images?.[0] ?? FALLBACK_IMAGE,
     sellingPoints: amenities.slice(0, 3),
-    dealUrl: buildBookingUrl(
-      h.name,
-      tripIntent?.start_date,
-      tripIntent?.end_date,
-      personCount,
-    ),
+    dealUrl: buildBookingUrl(h.name, checkin, checkout, personCount),
   };
 }
 
