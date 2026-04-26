@@ -92,7 +92,9 @@ def load_app_config() -> AppConfig:
 
 
 def load_markdown_prompt(prompt_path: Optional[Path] = None) -> str:
-    return (prompt_path or DEFAULT_PROMPT_PATH).read_text(encoding="utf-8").strip()
+    from datetime import date
+    raw = (prompt_path or DEFAULT_PROMPT_PATH).read_text(encoding="utf-8").strip()
+    return raw.replace("{{TODAY}}", date.today().isoformat())
 
 
 def load_env_file(env_path: Optional[Path] = None) -> None:

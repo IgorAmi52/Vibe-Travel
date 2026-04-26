@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { refineSession, startSession } from "@/lib/sessionClient";
+import {
+  refineSession,
+  removeIntentChip,
+  startSession,
+} from "@/lib/sessionClient";
 import type { PackageCardViewModel, SessionSnapshot } from "@/lib/types";
 import { AppChrome } from "./AppChrome";
 import { ResultsLayout } from "./ResultsLayout";
@@ -19,11 +23,17 @@ function applySnapshot(
     setSessionId: (id: string) => void;
     setDisplayTheme: (s: string) => void;
     setPackages: (p: PackageCardViewModel[]) => void;
+    setTripFactsLine: (s: string) => void;
+    setIntentChips: (c: string[]) => void;
+    setClarificationPrompt: (s: string | null) => void;
   },
 ) {
   setters.setSessionId(snap.sessionId);
   setters.setDisplayTheme(snap.displayTheme);
   setters.setPackages(snap.packages);
+  setters.setTripFactsLine(snap.tripFactsLine);
+  setters.setIntentChips(snap.intentChips);
+  setters.setClarificationPrompt(snap.clarificationPrompt ?? null);
 }
 
 export function PackagesExperience() {
@@ -32,6 +42,11 @@ export function PackagesExperience() {
     "Discover flight + hotel packages matched to your vibe",
   );
   const [packages, setPackages] = useState<PackageCardViewModel[]>([]);
+  const [tripFactsLine, setTripFactsLine] = useState("");
+  const [intentChips, setIntentChips] = useState<string[]>([]);
+  const [clarificationPrompt, setClarificationPrompt] = useState<
+    string | null
+  >(null);
   const [refineInput, setRefineInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [statusIdx, setStatusIdx] = useState(0);
@@ -48,6 +63,9 @@ export function PackagesExperience() {
     setSessionId,
     setDisplayTheme,
     setPackages,
+    setTripFactsLine,
+    setIntentChips,
+    setClarificationPrompt,
   };
 
   async function handleSubmit() {
@@ -55,15 +73,28 @@ export function PackagesExperience() {
     if (!q || loading) return;
     setLoading(true);
     setStatusIdx(0);
+    setClarificationPrompt(null);
     try {
+      let snap: SessionSnapshot;
       if (!sessionId) {
-        const snap = await startSession(q);
-        applySnapshot(snap, setters);
+        snap = await startSession(q);
       } else {
-        const snap = await refineSession(sessionId, q);
-        applySnapshot(snap, setters);
+        snap = await refineSession(sessionId, q);
       }
+      applySnapshot(snap, setters);
       setRefineInput("");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRemoveChip(chip: string) {
+    if (!sessionId || loading) return;
+    setLoading(true);
+    setStatusIdx(0);
+    try {
+      const snap = await removeIntentChip(sessionId, chip);
+      applySnapshot(snap, setters);
     } finally {
       setLoading(false);
     }
@@ -78,6 +109,10 @@ export function PackagesExperience() {
       <AppChrome />
       <SearchSummaryBar
         displayTheme={displayTheme}
+        tripFactsLine={tripFactsLine}
+        intentChips={intentChips}
+        onRemoveChip={handleRemoveChip}
+        clarificationPrompt={clarificationPrompt}
         refinePlaceholder={refinePlaceholder}
         refineValue={refineInput}
         onRefineChange={setRefineInput}
