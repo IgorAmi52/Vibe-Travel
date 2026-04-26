@@ -48,21 +48,27 @@ function SparkleIcon() {
 
 function SkeletonCard() {
   return (
-    <div className="flex animate-pulse flex-col overflow-hidden rounded-ss border border-slate-300/80 bg-white shadow-card motion-reduce:animate-none md:flex-row">
-      <div className="h-52 w-full bg-slate-200 md:h-auto md:w-[280px]" />
-      <div className="flex flex-1 flex-col gap-3 p-4 md:p-5">
-        <div className="h-6 w-[75%] rounded bg-slate-200" />
-        <div className="h-4 w-1/2 rounded bg-slate-200" />
-        <div className="flex gap-2">
-          <div className="h-6 w-20 rounded-full bg-slate-200" />
-          <div className="h-6 w-24 rounded-full bg-slate-200" />
+    <div className="flex animate-pulse flex-col overflow-hidden rounded-ss border border-slate-200 bg-white shadow-sm motion-reduce:animate-none sm:flex-row">
+      <div className="h-36 w-full bg-slate-200 sm:h-auto sm:w-[200px]" />
+      <div className="flex flex-1 flex-col gap-2 p-3 sm:p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 space-y-1.5">
+            <div className="h-5 w-[70%] rounded bg-slate-200" />
+            <div className="h-3 w-1/3 rounded bg-slate-200" />
+          </div>
+          <div className="space-y-1">
+            <div className="h-6 w-20 rounded bg-slate-200" />
+            <div className="h-3 w-14 rounded bg-slate-200" />
+          </div>
         </div>
-        <div className="h-4 w-full rounded bg-slate-200" />
-        <div className="h-4 w-5/6 rounded bg-slate-200" />
+        <div className="flex gap-1.5">
+          <div className="h-5 w-20 rounded-full bg-slate-200" />
+          <div className="h-5 w-24 rounded-full bg-slate-200" />
+        </div>
+        <div className="h-3 w-full rounded bg-slate-100" />
       </div>
-      <div className="hidden w-56 flex-col gap-3 border-l border-slate-200 p-4 md:flex">
-        <div className="h-8 w-full rounded bg-slate-200" />
-        <div className="h-10 w-full rounded-ss bg-ss-navy/20" />
+      <div className="hidden w-[120px] items-center border-l border-slate-200 p-3 sm:flex">
+        <div className="h-9 w-full rounded-ss bg-slate-200" />
       </div>
     </div>
   );
@@ -70,8 +76,8 @@ function SkeletonCard() {
 
 export function ResultsLoadingState({ statusMessage }: ResultsLoadingStateProps) {
   return (
-    <div className="relative min-h-[420px]">
-      <div className="space-y-4 opacity-50">
+    <div className="relative min-h-[320px]">
+      <div className="space-y-3 opacity-50">
         <SkeletonCard />
         <SkeletonCard />
         <SkeletonCard />

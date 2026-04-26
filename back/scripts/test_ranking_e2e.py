@@ -136,11 +136,11 @@ async def main() -> None:
     pipeline_start = time.perf_counter()
 
     try:
-        # ── Step 1: Resolve City ────────────────────────────────────
+        # ── Step 1: Resolve Destination ─────────────────────────────
         section(f"Step 1: Resolve Destination — '{DESTINATION}'")
-        with timed("resolve_city_entity"):
-            entity_id = await ranking_service._resolve_city_entity(DESTINATION)
-        logger.info("  Resolved: %s → entity=%s", DESTINATION, entity_id)
+        with timed("resolve_destination_entity"):
+            entity_id, search_type = await ranking_service._resolve_destination_entity(DESTINATION)
+        logger.info("  Resolved: %s → entity=%s (type=%s)", DESTINATION, entity_id, search_type)
 
         # ── Step 2: Indicative Search ───────────────────────────────
         check_in = date.today() + timedelta(days=CHECK_IN_OFFSET_DAYS)
@@ -153,6 +153,7 @@ async def main() -> None:
                 check_in=check_in,
                 check_out=check_out,
                 currency=CURRENCY,
+                search_type=search_type,
             )
 
         if not search_results:

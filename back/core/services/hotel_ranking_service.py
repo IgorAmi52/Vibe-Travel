@@ -14,7 +14,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_VIBE_WEIGHT = 0.6
 DEFAULT_PRICE_WEIGHT = 0.2
 DEFAULT_RATING_WEIGHT = 0.2
-MAX_REVIEWS_TO_FETCH = 50
+MAX_REVIEWS_TO_FETCH = 15
+# Destination types Booking.com supports for hotel search, ordered by how well
+# they typically match a user-facing place name (cities are tightest scope).
+_ACCEPTED_DESTINATION_TYPES: tuple[str, ...] = (
+    "city",
+    "region",
+    "district",
+    "landmark",
+    "country",
+)
 
 
 class HotelRankingService:
@@ -43,7 +52,7 @@ class HotelRankingService:
         check_out: date,
         currency: str = "USD",
     ) -> list[ScoredHotel]:
-        resolved_destination = await self._resolve_destination(destination)
+        entity_id, search_type = await self._resolve_destination_entity(destination)
 
         search_results = await self._hotel_api.indicative_search(
             entity_id=resolved_destination.entity_id,
@@ -51,6 +60,7 @@ class HotelRankingService:
             check_out=check_out,
             search_type=resolved_destination.dest_type or "city",
             currency=currency,
+            search_type=search_type,
         )
         if not search_results:
             raise ValueError(
@@ -58,42 +68,61 @@ class HotelRankingService:
                 f"'{destination}' (entity={resolved_destination.entity_id}, type={resolved_destination.dest_type})"
             )
 
-        hotel_ids = [h.hotel_id for h in search_results]
-        logger.info(
-            "Found %d hotels for entity '%s' with search_type '%s'",
-            len(hotel_ids),
-            resolved_destination.entity_id,
-            resolved_destination.dest_type,
-        )
+        # Booking.com's searchHotels still returns properties that have no
+        # availability for the requested window (priceBreakdown.grossPrice is
+        # null). Including them produces deal links that land on a "no
+        # availability for these dates" page, which is bad UX. Drop them here
+        # so the user only sees genuinely bookable options.
+        bookable_results = [r for r in search_results if r.price is not None]
+        dropped = len(search_results) - len(bookable_results)
+        if dropped:
+            logger.info(
+                "Dropped %d/%d hotels with no availability for %s → %s",
+                dropped,
+                len(search_results),
+                check_in.isoformat(),
+                check_out.isoformat(),
+            )
+        if not bookable_results:
+            raise ValueError(
+                f"No hotels with availability for '{destination}' "
+                f"between {check_in.isoformat()} and {check_out.isoformat()}"
+            )
+
+        hotel_ids = [h.hotel_id for h in bookable_results]
+        logger.info("Found %d bookable hotels for entity '%s'", len(hotel_ids), entity_id)
 
         contents, descriptions, reviews_by_hotel = await self._fetch_hotel_data(hotel_ids)
-        hotels = self._build_hotels(search_results, contents, descriptions, reviews_by_hotel)
+        hotels = self._build_hotels(bookable_results, contents, descriptions, reviews_by_hotel)
         similarities = await self._compute_similarities(vibe_query, hotels)
 
         return self._score_and_rank(hotels, similarities)
 
-    async def _resolve_city_entity(self, destination: str) -> str:
-        return (await self._resolve_destination(destination)).entity_id
-
-    async def _resolve_destination(self, destination: str) -> Destination:
+    async def _resolve_destination_entity(self, destination: str) -> tuple[str, str]:
         destinations = await self._hotel_api.autosuggest(destination)
         if not destinations:
             raise ValueError(f"No destinations found for '{destination}'")
 
-        city = next((d for d in destinations if d.dest_type == "city"), None)
-        if city:
-            logger.info("Resolved '%s' → %s (entity=%s type=%s)", destination, city.name, city.entity_id, city.dest_type)
-            return city
+        match = None
+        for accepted_type in _ACCEPTED_DESTINATION_TYPES:
+            match = next((d for d in destinations if d.dest_type == accepted_type), None)
+            if match:
+                break
 
-        fallback = next((d for d in destinations if d.entity_id), destinations[0])
+        if not match:
+            raise ValueError(
+                f"No usable destination found for '{destination}'. "
+                f"Got: {[(d.name, d.dest_type) for d in destinations]}"
+            )
+
         logger.info(
-            "Resolved '%s' → %s (entity=%s type=%s) using non-city fallback",
+            "Resolved '%s' → %s (entity=%s, type=%s)",
             destination,
-            fallback.name,
-            fallback.entity_id,
-            fallback.dest_type,
+            match.name,
+            match.entity_id,
+            match.dest_type,
         )
-        return fallback
+        return match.entity_id, match.dest_type
 
     async def _fetch_hotel_data(
         self, hotel_ids: list[str],

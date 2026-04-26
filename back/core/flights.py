@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Protocol
+
+
+# Caps the trip length when pairing indicative outbound × inbound quotes in
+# BY_MONTH mode. Without this, the cheapest cross-pair can span many months
+# (e.g. fly out in June, return in December), which makes no sense for hotels.
+_MAX_INDICATIVE_TRIP_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -146,8 +152,8 @@ class FlightChainService:
         *,
         origin_iata: str,
         destination_iata: str,
-        departure_date: str,
-        return_date: str,
+        departure_date: str | None = None,
+        return_date: str | None = None,
         market: str = "UK",
         locale: str = "en-GB",
         currency: str = "EUR",
@@ -178,6 +184,8 @@ class FlightChainService:
         grouped: list[dict[str, Any]] = []
         for outbound_quote in outbound_quotes:
             for inbound_quote in inbound_quotes:
+                if not _is_valid_roundtrip_pair(outbound_quote, inbound_quote):
+                    continue
                 grouped.append(_combine_indicative_quotes(outbound_quote, inbound_quote))
 
         ranked = sorted(grouped, key=lambda item: _extract_grouped_price(item))
@@ -258,3 +266,34 @@ def _extract_grouped_price(item: dict[str, Any]) -> float:
     price = item.get("price") if isinstance(item.get("price"), dict) else {}
     amount = _price_amount(price)
     return amount if amount is not None else float("inf")
+
+
+def _is_valid_roundtrip_pair(
+    outbound_quote: dict[str, Any], inbound_quote: dict[str, Any]
+) -> bool:
+    """A roundtrip is only meaningful if the return is strictly after the
+    departure and the trip length stays within a reasonable window."""
+    outbound_dt = outbound_quote.get("outbound_datetime")
+    inbound_dt = inbound_quote.get("outbound_datetime")
+    if not outbound_dt or not inbound_dt:
+        return True
+    if str(inbound_dt) <= str(outbound_dt):
+        return False
+    out_date = _parse_iso_date(outbound_dt)
+    in_date = _parse_iso_date(inbound_dt)
+    if out_date is None or in_date is None:
+        return True
+    delta_days = (in_date - out_date).days
+    return 0 < delta_days <= _MAX_INDICATIVE_TRIP_DAYS
+
+
+def _parse_iso_date(value: Any) -> date | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value).date()
+    except ValueError:
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None

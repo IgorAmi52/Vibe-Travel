@@ -3,7 +3,7 @@ export function AppChrome() {
     <header className="relative z-40 bg-ss-navy text-white">
       <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-4 pb-2 pt-3 md:px-6 md:pb-2.5 md:pt-4">
         <span className="text-lg font-bold tracking-tight text-white">
-          Skyscanner
+          VibeTravel
         </span>
         <div className="flex shrink-0 items-center gap-1.5 text-sm md:gap-2">
           <button

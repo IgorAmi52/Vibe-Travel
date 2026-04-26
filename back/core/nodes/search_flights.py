@@ -73,47 +73,38 @@ class SearchFlightsNode:
             primary_iata = resolved_destinations[0][1] if resolved_destinations else destination_iata
             has_full_dates = bool(departure_date_str and return_date_str)
             try:
-                quotes: List[Dict[str, Any]] = []
-                if anywhere_search:
+                if destination_iata:
+                    # Always query both directions for a known destination so both
+                    # outbound and inbound legs carry dates (avoids "TBC" return).
+                    quotes = list(
+                        await self.flight_service.get_indicative_roundtrip(
+                            origin_iata=origin_iata,
+                            destination_iata=destination_iata,
+                            departure_date=departure_date_str,
+                            return_date=return_date_str,
+                            limit=self.limit,
+                        )
+                    )
+                else:
                     indicative = await self.flight_service.get_indicative_anywhere(
                         origin_iata=origin_iata,
-                        destination_iata=None,
+                        destination_iata=destination_iata,
                         outbound_date=departure_date_str,
                         return_date=return_date_str,
                     )
-                    if isinstance(indicative, dict):
-                        quotes = list(indicative.get("quotes") or [])
-                else:
-                    for place_name, place_iata in resolved_destinations:
-                        if has_full_dates:
-                            destination_quotes = list(
-                                await self.flight_service.get_indicative_roundtrip(
-                                    origin_iata=origin_iata,
-                                    destination_iata=place_iata,
-                                    departure_date=departure_date_str,
-                                    return_date=return_date_str,
-                                    limit=self.limit,
-                                )
-                            )
-                        else:
-                            indicative = await self.flight_service.get_indicative_anywhere(
-                                origin_iata=origin_iata,
-                                destination_iata=place_iata,
-                                outbound_date=departure_date_str,
-                                return_date=return_date_str,
-                            )
-                            if not isinstance(indicative, dict):
-                                continue
-                            destination_quotes = list(indicative.get("quotes") or [])
-
-                        for quote in destination_quotes:
-                            quotes.append(
-                                {
-                                    **quote,
-                                    "destination_place": place_name,
-                                    "destination_iata": place_iata,
-                                }
-                            )
+                    if not isinstance(indicative, dict):
+                        return {
+                            "hotel_results": [],
+                            "grouped_results": [],
+                            "status": "needs_clarification",
+                            "next_step": "search_flights",
+                            "needs_clarification": True,
+                            "clarification_prompt": (
+                                "Indicative flight search did not return usable results. "
+                                "Could you try a different origin airport or travel month?"
+                            ),
+                        }
+                    quotes = list(indicative.get("quotes") or [])
             except Exception as exc:
                 return {
                     "hotel_results": [],
@@ -140,8 +131,10 @@ class SearchFlightsNode:
                     ),
                 }
 
+            scaled_quotes = _scale_flight_prices(quotes, person_count)
+
             return {
-                "flight_results": quotes,
+                "flight_results": scaled_quotes,
                 "hotel_results": [],
                 "grouped_results": [],
                 "origin_iata": origin_iata,
@@ -192,3 +185,23 @@ def _normalize_search_value(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _scale_flight_prices(quotes: List[Dict[str, Any]], person_count: int) -> List[Dict[str, Any]]:
+    """Skyscanner indicative prices are per-person; scale to total for the group."""
+    if person_count <= 1:
+        return quotes
+    scaled: List[Dict[str, Any]] = []
+    for q in quotes:
+        q = dict(q)
+        price = q.get("price")
+        if isinstance(price, dict) and price.get("amount") is not None:
+            q["price"] = {**price, "amount": float(price["amount"]) * person_count}
+        for leg_key in ("outbound", "inbound"):
+            leg = q.get(leg_key)
+            if isinstance(leg, dict):
+                leg_price = leg.get("price")
+                if isinstance(leg_price, dict) and leg_price.get("amount") is not None:
+                    q[leg_key] = {**leg, "price": {**leg_price, "amount": float(leg_price["amount"]) * person_count}}
+        scaled.append(q)
+    return scaled

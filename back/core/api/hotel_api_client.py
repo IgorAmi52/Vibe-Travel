@@ -20,8 +20,14 @@ class HotelApiClient(ABC):
         check_out: date,
         search_type: str = "city",
         currency: str = "USD",
+        search_type: str = "city",
     ) -> list[HotelSearchResult]:
-        """Search hotels for a destination + date range. Returns hotels with pricing."""
+        """Search hotels for a destination + date range. Returns hotels with pricing.
+
+        ``search_type`` mirrors Booking.com's destination kinds (city, region,
+        district, landmark, etc.) so callers can use the type returned by
+        autosuggest rather than always defaulting to city.
+        """
 
     @abstractmethod
     async def get_content(self, hotel_ids: list[str]) -> list[HotelContent]:

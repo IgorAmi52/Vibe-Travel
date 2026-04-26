@@ -61,6 +61,7 @@ class FixtureHotelApiClient(HotelApiClient):
         check_out: date,
         search_type: str = "city",
         currency: str = "USD",
+        search_type: str = "city",
     ) -> list[HotelSearchResult]:
         dest_dir = self._entity_index.get(entity_id)
         if not dest_dir:

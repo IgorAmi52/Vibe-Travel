@@ -12,6 +12,7 @@ class IntentStruct:
     end_date: Optional[str] = None
     budget: Optional[int] = None
     vibe: Optional[str] = None
+    person_count: Optional[int] = None
 
     def normalized(self) -> "IntentStruct":
         return IntentStruct(
@@ -21,6 +22,7 @@ class IntentStruct:
             end_date=_clean_optional_string(self.end_date),
             budget=self.budget,
             vibe=self.vibe,
+            person_count=self.person_count,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -28,6 +30,7 @@ class IntentStruct:
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "IntentStruct":
+        raw_pc = payload.get("person_count")
         return cls(
             places=list(payload.get("places") or []),
             countries=list(payload.get("countries") or []),
@@ -35,6 +38,7 @@ class IntentStruct:
             end_date=payload.get("end_date"),
             budget=payload.get("budget"),
             vibe=payload.get("vibe"),
+            person_count=int(raw_pc) if raw_pc is not None else None,
         ).normalized()
 
     @staticmethod
@@ -76,8 +80,15 @@ class IntentStruct:
                         "the user wants and what matters to them."
                     ),
                 },
+                "person_count": {
+                    "type": ["integer", "null"],
+                    "description": (
+                        "Number of travellers when the user specifies a group size "
+                        "(e.g. 'for two', '3 people', 'couple'), otherwise null."
+                    ),
+                },
             },
-            "required": ["places", "countries", "start_date", "end_date", "budget", "vibe"],
+            "required": ["places", "countries", "start_date", "end_date", "budget", "vibe", "person_count"],
             "additionalProperties": False,
             "propertyOrdering": [
                 "places",
@@ -86,6 +97,7 @@ class IntentStruct:
                 "end_date",
                 "budget",
                 "vibe",
+                "person_count",
             ],
         }
 

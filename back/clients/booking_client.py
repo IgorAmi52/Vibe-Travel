@@ -13,6 +13,8 @@ from core.models.hotel import Destination, HotelContent, HotelReview, HotelSearc
 
 logger = logging.getLogger(__name__)
 
+SEARCH_TYPE_CITY = "city"
+_VALID_SEARCH_TYPES = {"city", "region", "district", "landmark", "country", "hotel", "airport"}
 REVIEW_SORT_MOST_RELEVANT = "SORT_MOST_RELEVANT"
 _AUTH_ERROR_CODES = {401, 403, 429}
 
@@ -53,10 +55,14 @@ class BookingComClient(HotelApiClient):
         check_out: date,
         search_type: str = "city",
         currency: str = "USD",
+        search_type: str = SEARCH_TYPE_CITY,
     ) -> list[HotelSearchResult]:
+        normalized_search_type = (
+            search_type if search_type in _VALID_SEARCH_TYPES else SEARCH_TYPE_CITY
+        )
         params = {
             "dest_id": entity_id,
-            "search_type": search_type or "city",
+            "search_type": normalized_search_type,
             "arrival_date": check_in.isoformat(),
             "departure_date": check_out.isoformat(),
             "adults": 2,
@@ -117,7 +123,7 @@ class BookingComClient(HotelApiClient):
 
         return parse_description(response.json())
 
-    async def get_reviews(self, hotel_id: str, limit: int = 30) -> list[HotelReview]:
+    async def get_reviews(self, hotel_id: str, limit: int = 15) -> list[HotelReview]:
         all_reviews: list[HotelReview] = []
         page = 0
 
