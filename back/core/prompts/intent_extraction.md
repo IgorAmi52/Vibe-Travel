@@ -14,5 +14,6 @@ Rules:
 - Prefer concrete destinations over broad regions.
 - If the user asks for a vague region such as the Alps, map it to specific places that fit the vibe.
 - Do not invent exact dates unless the user gave enough information to infer them safely.
+- When the user mentions a month or date without a year, use the current year ({{YEAR}}) if that date is still in the future; only use the next year if the date has already passed.
 - Keep `vibe` concise and useful for downstream hotel filtering.
 - Return only valid JSON.
