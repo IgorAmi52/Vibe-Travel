@@ -79,15 +79,19 @@ The experience is conversational: the system shows what it understood, lets the 
 - Intent tags shown as removable chips; removing a tag triggers a result refresh
 
 ### FR3 — Flight Search
-- Resolve each place to a Skyscanner entity ID via autosuggest
-- Retrieve roundtrip flight chains (Skyscanner API): departure + return legs, price, duration
-- Support indicative (destination-open) and chains (roundtrip) modes
-- Places with no flight data remain in results with null price, ranked lower
+- Resolve each candidate place to a Skyscanner entity ID via autosuggest
+- Fan out across every resolved place so multi-destination queries (e.g. "Alps") return options for several airports, not just the first match
+- Retrieve roundtrip flight chains (Skyscanner indicative + live prices): departure + return legs, price, duration
+- Support indicative (destination-open) and chains (roundtrip) modes; cap indicative trip length at 30 days when the user has not provided dates
+- Scale per-person Skyscanner prices to the requested traveller count
+- Places with no flight data are reported back as a clarification prompt rather than silently dropped
 
 ### FR4 — Hotel Search & Vibe Ranking
 - Fetch hotels for each destination (Booking.com via RapidAPI)
-- For each hotel, build an embeddable text blob: description + amenities + top review texts
-- Embed the blob and the user's vibe string using Gemini (`text-embedding-004`)
+- Resolve destinations against `city`, `region`, `district`, `landmark`, and `country` autosuggest types so region-level queries (e.g. "Dolomites") still find inventory
+- Drop properties with no availability for the requested dates so deal links never land on a "no rooms" page
+- For each remaining hotel, build an embeddable text blob: description + amenities + top review texts
+- Embed the blob and the user's vibe string using Gemini (`gemini-embedding-001`)
 - Score each hotel:
   ```
   composite_score = 0.7 × vibe_similarity + 0.2 × price_score + 0.1 × guest_rating
@@ -101,13 +105,15 @@ The experience is conversational: the system shows what it understood, lets the 
 
 ### FR6 — Booking Handoff
 - Every result card must have a shallow-link CTA
-- Link must pre-fill origin, destination, and dates where available
-- For specific-intent queries, link opens Skyscanner live search (not indicative)
+- Skyscanner flight links pre-fill origin, destination, both legs' dates, and traveller count (`adultsv2`)
+- Booking.com hotel links deep-link to the specific property (`dest_type=hotel&dest_id=<hotel_id>`) and pre-fill check-in / check-out dates
+- When the user did not specify trip dates, the deal links fall back to dates from the matched flight quote so the booking pages always open on a valid window
 
 ### FR7 — HTTP API
-- Expose `/invoke` (trip planner), `/flights/chains`, `/flights/indicative`, `/health`
+- Expose `/invoke` (trip planner), `/flights/chains`, `/flights/indicative`, `/health`, `/schema`
 - `POST /invoke` accepts `NEW` and `CLARIFICATION` request types
 - All endpoints return JSON; error codes: `400` bad request, `404` unknown route, `500` internal
+- The frontend reaches the backend through a thin Next.js route handler (`/api/invoke`) so the browser never talks to the Python service directly
 
 ---
 

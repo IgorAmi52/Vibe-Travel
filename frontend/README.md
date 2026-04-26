@@ -1,36 +1,90 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vibe Travel — Frontend
 
-## Getting Started
+Next.js 15 + React 19 + TypeScript + Tailwind UI for the Vibe Travel trip planner. The frontend is a thin chat-style interface around the backend graph: it sends the user's free-form query (and any clarification turns) to the Python backend and renders the returned flight + hotel packages.
 
-First, run the development server:
+## Prerequisites
+
+- Node.js 18.18+ (Next.js 15 requirement)
+- The backend running locally on `http://127.0.0.1:8080` — see [`../back/README.md`](../back/README.md)
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+To point at a non-default backend:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+BACKEND_API_URL=http://localhost:9090 npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Scripts
 
-## Learn More
+| Command | What it does |
+|---------|--------------|
+| `npm run dev` | Start the Next.js dev server |
+| `npm run dev:turbo` | Same, with Turbopack |
+| `npm run build` | Production build |
+| `npm run start` | Serve the production build |
+| `npm run lint` | ESLint (Next.js config) |
 
-To learn more about Next.js, take a look at the following resources:
+## Architecture
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The frontend is intentionally simple: there is no client-side store, no auth, and no persistence. State lives in React on the page; every refinement (clarification turn) re-submits the previous backend `state` so the pipeline can apply the new query on top of it.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+app/page.tsx
+   │
+   ▼
+PackagesExperience  ── owns the chat session state
+   │
+   ├─ SearchSummaryBar       (query input + traveller count + clarification chips)
+   ├─ ResultsLayout
+   │     ├─ ResultsLoadingState  (skeleton while a request is in flight)
+   │     └─ PackageCard[]        (one per destination group)
+   └─ AppChrome              (header / branding)
+```
 
-## Deploy on Vercel
+### Key files
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Path | Purpose |
+|------|---------|
+| `app/page.tsx` | Entry page; mounts `PackagesExperience` |
+| `app/api/invoke/route.ts` | Server-side Next.js route handler that proxies `POST /api/invoke` → backend `POST /invoke` |
+| `lib/sessionClient.ts` | Browser-side fetch wrapper that calls `/api/invoke` and threads `state` across turns |
+| `lib/mapInvokeResponse.ts` | Converts the backend `InvokeResponse` into a `SessionSnapshot` (intent chips, package view models, clarification prompts). Builds the Skyscanner and Booking.com deal URLs |
+| `lib/mapPackageView.ts` | Shapes a single package (flights + hotel) into the props the card expects |
+| `lib/types.ts` | Shared TypeScript types for the backend contract and view models |
+| `lib/formatMoney.ts` | Currency formatting helper |
+| `lib/mock/` | Static fixtures used as a fallback when the backend is unreachable |
+| `components/PackageCard.tsx` | One destination's flight options + featured hotel + deal CTAs |
+| `components/PackagesExperience.tsx` | Orchestrates queries, clarification turns, and result display |
+| `components/SearchSummaryBar.tsx` | Search input + intent chips (removable) |
+| `components/ResultsLayout.tsx` | Layout shell for the packages grid |
+| `components/ResultsLoadingState.tsx` | Skeleton state |
+| `components/AppChrome.tsx` | Header / branding (VibeTravel) |
+| `components/FilterSidebar.tsx` | Filter controls (currently hidden in the layout) |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Deal links
+
+`lib/mapInvokeResponse.ts` is responsible for building the outbound URLs the user clicks:
+
+- **Skyscanner flights** — uses `adultsv2`, `children=0`, `infants=0`, `cabinclass=economy`, and `rtn=1`/`rtn=0` so the Skyscanner search page opens with the correct traveller count and trip type already selected.
+- **Booking.com hotels** — uses `dest_type=hotel&dest_id=<hotel_id>` with `checkin`/`checkout` so the link deep-links straight to the property page on the right dates instead of doing a fuzzy text search. Falls back to flight dates when the user did not specify trip dates.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `BACKEND_API_URL` | `http://127.0.0.1:8080` | Where the `/api/invoke` route handler proxies to |
+
+## Production
+
+```bash
+npm run build
+npm run start
+```
+
+Deploy anywhere that runs Node.js. Make sure `BACKEND_API_URL` points at the deployed backend.
