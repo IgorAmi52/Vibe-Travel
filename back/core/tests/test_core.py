@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +21,8 @@ from core.graph import LANGGRAPH_AVAILABLE
 from core.nodes.group_results import GroupResultsNode
 from core.nodes.search_flights import SearchFlightsNode
 from core.nodes.search_hotels import SearchHotelsNode
-from core.models.hotel import Hotel, ScoredHotel
+from core.models.hotel import Destination, Hotel, HotelSearchResult, PriceBreakdown, ScoredHotel
+from core.services.hotel_ranking_service import HotelRankingService
 from core.state import TripPlannerState, create_initial_state
 
 
@@ -80,7 +82,7 @@ class CoreModuleTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "indicative_flights_ready")
-        self.assertEqual(result["next_step"], "select_dates")
+        self.assertEqual(result["next_step"], "search_hotels")
         self.assertEqual(result["trip_intent"]["places"], ["Chamonix", "Zermatt"])
         self.assertEqual(result["trip_intent"]["countries"], ["France", "Switzerland"])
         self.assertEqual(result["trip_intent"]["budget"], 2400)
@@ -177,7 +179,7 @@ class CoreModuleTests(unittest.TestCase):
 
         self.assertEqual(payload["state"]["trip_intent"]["places"], ["Val d'Isere"])
         self.assertEqual(payload["state"]["status"], "indicative_flights_ready")
-        self.assertEqual(payload["state"]["next_step"], "select_dates")
+        self.assertEqual(payload["state"]["next_step"], "search_hotels")
         self.assertGreater(len(payload["state"]["flight_results"]), 0)
         self.assertEqual(payload["state"]["hotel_results"], [])
         self.assertEqual(payload["state"]["grouped_results"], [])
@@ -592,7 +594,7 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(result["origin_iata"], "BCN")
         self.assertEqual(result["destination_place"], "Paris")
         self.assertEqual(result["destination_iata"], "CDG")
-        self.assertEqual(result["next_step"], "select_dates")
+        self.assertEqual(result["next_step"], "search_hotels")
         self.assertEqual(provider.calls[0]["destination_iata"], "CDG")
         self.assertIsNone(provider.calls[0]["outbound_date"])
         self.assertIsNone(provider.calls[0]["return_date"])
@@ -607,9 +609,11 @@ class CoreModuleTests(unittest.TestCase):
             async def resolve_iata_code(self, search_term: str, *, market: str = "UK", locale: str = "en-GB"):
                 del market, locale
                 if search_term == "Chamonix":
-                    return None
+                    return "GVA"
                 if search_term == "Zermatt":
                     return "ZRH"
+                if search_term == "Grindelwald":
+                    return "BRN"
                 return None
 
             async def search_roundtrip_chains(self, params):
@@ -657,10 +661,15 @@ class CoreModuleTests(unittest.TestCase):
         result = node({"trip_intent": {"places": ["Chamonix", "Zermatt", "Grindelwald"]}})
 
         self.assertEqual(result["status"], "indicative_flights_ready")
-        self.assertEqual(result["destination_place"], "Zermatt")
-        self.assertEqual(result["destination_iata"], "ZRH")
-        self.assertEqual(result["next_step"], "select_dates")
-        self.assertEqual(provider.calls[0]["destination_iata"], "ZRH")
+        self.assertEqual(result["destination_place"], "Chamonix")
+        self.assertEqual(result["destination_iata"], "GVA")
+        self.assertEqual(result["next_step"], "search_hotels")
+        self.assertEqual(len(provider.calls), 3)
+        self.assertEqual([call["destination_iata"] for call in provider.calls], ["GVA", "ZRH", "BRN"])
+        self.assertEqual(
+            [item["destination_place"] for item in result["flight_results"]],
+            ["Chamonix", "Zermatt", "Grindelwald"],
+        )
         self.assertTrue(provider.closed)
 
     def test_search_hotels_falls_back_to_flight_dates_when_intent_dates_missing(self) -> None:
@@ -775,20 +784,143 @@ class CoreModuleTests(unittest.TestCase):
         self.assertEqual(hotel_service.calls[0]["check_out"], "2026-08-14")
         self.assertTrue(hotel_service.closed)
 
+    def test_search_hotels_ranks_all_destinations_present_in_flights(self) -> None:
+        class _HotelService:
+            def __init__(self) -> None:
+                self.calls = []
+                self.closed = False
+
+            async def rank_hotels(self, *, vibe_query, destination, check_in, check_out, currency="USD"):
+                self.calls.append(destination)
+                return [
+                    ScoredHotel(
+                        hotel=Hotel(hotel_id=f"{destination}-h1", name=f"{destination} Hotel", price=200.0, currency="USD"),
+                        vibe_similarity=0.8,
+                        price_score=0.8,
+                        guest_rating_score=0.8,
+                        composite_score=0.8,
+                    )
+                ]
+
+            async def close(self) -> None:
+                self.closed = True
+
+        hotel_service = _HotelService()
+        node = SearchHotelsNode(hotel_ranking_service_factory=lambda: hotel_service)
+        result = node(
+            {
+                "status": "indicative_flights_ready",
+                "trip_intent": {"places": ["Chamonix", "Zermatt"], "vibe": "niche countryside"},
+                "flight_results": [
+                    {
+                        "destination_place": "Chamonix",
+                        "outbound_datetime": "2026-08-10T09:00:00",
+                        "inbound_datetime": None,
+                    },
+                    {
+                        "destination_place": "Zermatt",
+                        "outbound_datetime": "2026-08-11T09:00:00",
+                        "inbound_datetime": None,
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(result["status"], "hotels_ranked")
+        self.assertEqual(hotel_service.calls, ["Chamonix", "Zermatt"])
+        self.assertEqual(
+            [item["destination_place"] for item in result["hotel_results"]],
+            ["Chamonix", "Zermatt"],
+        )
+        self.assertTrue(hotel_service.closed)
+
+    def test_hotel_ranking_service_uses_non_city_destination_fallback(self) -> None:
+        captured = {}
+
+        class _HotelApi:
+            async def autosuggest(self, search_term: str):
+                return [
+                    Destination(
+                        entity_id="dest-123",
+                        name="Zermatt",
+                        dest_type="landmark",
+                        hierarchy="Switzerland",
+                    )
+                ]
+
+            async def indicative_search(
+                self,
+                entity_id,
+                check_in,
+                check_out,
+                search_type="city",
+                currency="USD",
+            ):
+                captured["entity_id"] = entity_id
+                captured["search_type"] = search_type
+                return [
+                    HotelSearchResult(
+                        hotel_id="hotel-1",
+                        name="Alpine Lodge",
+                        price=PriceBreakdown(gross_amount=250.0, currency="USD"),
+                        review_score=8.9,
+                    )
+                ]
+
+            async def get_content(self, hotel_ids):
+                return []
+
+            async def get_description(self, hotel_id):
+                return "Quiet alpine stay"
+
+            async def get_reviews(self, hotel_id, limit=30):
+                return []
+
+            async def close(self):
+                return None
+
+        class _EmbeddingService:
+            def build_text_blobs(self, hotels):
+                return [hotel.name for hotel in hotels]
+
+            async def embed_query_and_hotels(self, vibe_query, blobs):
+                return [1.0], [[1.0] for _ in blobs]
+
+        class _SimilarityService:
+            def compute_similarity(self, query_vec, hotel_vecs):
+                return [0.8 for _ in hotel_vecs]
+
+        service = HotelRankingService(
+            hotel_api=_HotelApi(),
+            embedding_service=_EmbeddingService(),
+            similarity_service=_SimilarityService(),
+        )
+
+        results = __import__("asyncio").run(
+            service.rank_hotels(
+                vibe_query="niche countryside",
+                destination="Zermatt",
+                check_in=date(2026, 8, 10),
+                check_out=date(2026, 8, 14),
+            )
+        )
+
+        self.assertEqual(captured["entity_id"], "dest-123")
+        self.assertEqual(captured["search_type"], "landmark")
+        self.assertEqual(results[0].hotel.name, "Alpine Lodge")
+
     def test_group_results_filters_final_offers_by_budget(self) -> None:
         node = GroupResultsNode(flight_limit=2, hotel_limit=2, option_limit=4)
         result = node(
             {
                 "budget": 300,
-                "destination_place": "Paris",
-                "destination_iata": "CDG",
                 "flight_results": [
-                    {"price": {"amount": 120.0, "unit": "EUR"}},
-                    {"price": {"amount": 220.0, "unit": "EUR"}},
+                    {"destination_place": "Paris", "destination_iata": "CDG", "price": {"amount": 120.0, "unit": "EUR"}},
+                    {"destination_place": "Zermatt", "destination_iata": "ZRH", "price": {"amount": 220.0, "unit": "EUR"}},
                 ],
                 "hotel_results": [
-                    {"name": "Budget Stay", "price": {"amount": 150.0, "currency": "EUR"}, "scores": {"composite_score": 0.7}},
-                    {"name": "Luxury Stay", "price": {"amount": 260.0, "currency": "EUR"}, "scores": {"composite_score": 0.9}},
+                    {"destination_place": "Paris", "name": "Budget Stay", "price": {"amount": 150.0, "currency": "EUR"}, "scores": {"composite_score": 0.7}},
+                    {"destination_place": "Zermatt", "name": "Luxury Stay", "price": {"amount": 260.0, "currency": "EUR"}, "scores": {"composite_score": 0.9}},
                 ],
             }
         )
@@ -806,8 +938,8 @@ class CoreModuleTests(unittest.TestCase):
         result = node(
             {
                 "budget": 200,
-                "flight_results": [{"price": {"amount": 180.0, "unit": "EUR"}}],
-                "hotel_results": [{"name": "Hotel", "price": {"amount": 150.0, "currency": "EUR"}, "scores": {"composite_score": 0.8}}],
+                "flight_results": [{"destination_place": "Paris", "price": {"amount": 180.0, "unit": "EUR"}}],
+                "hotel_results": [{"destination_place": "Paris", "name": "Hotel", "price": {"amount": 150.0, "currency": "EUR"}, "scores": {"composite_score": 0.8}}],
             }
         )
 
@@ -859,7 +991,7 @@ class CoreModuleTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "indicative_flights_ready")
-        self.assertEqual(result["next_step"], "select_dates")
+        self.assertEqual(result["next_step"], "search_hotels")
         self.assertEqual(result["hotel_results"], [])
         self.assertEqual(result["grouped_results"], [])
 

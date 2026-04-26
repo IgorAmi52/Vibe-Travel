@@ -29,14 +29,13 @@ class SearchFlightsNode:
         person_count = int(state.get("person_count") or intent.get("person_count") or 1)
 
         try:
-            if not destination_iata and places:
-                destination_iata, destination_place = await self._resolve_first_iata(places)
-            elif not destination_place and places:
-                destination_place = places[0]
-            elif not destination_place:
-                destination_place = destination_iata
+            resolved_destinations = await self._resolve_destinations(
+                destination_iata=destination_iata,
+                destination_place=destination_place,
+                places=places,
+            )
 
-            if not destination_iata and places:
+            if not resolved_destinations and places:
                 attempted_places = ", ".join(places)
                 return {
                     "hotel_results": [],
@@ -52,38 +51,69 @@ class SearchFlightsNode:
                     ),
                 }
 
-            has_full_dates = bool(destination_iata and departure_date_str and return_date_str)
+            if not resolved_destinations and destination_iata:
+                resolved_destinations = [(destination_place or destination_iata, destination_iata)]
+
+            anywhere_search = not resolved_destinations and not destination_iata and not places
+            if not resolved_destinations and not anywhere_search:
+                return {
+                    "hotel_results": [],
+                    "grouped_results": [],
+                    "status": "needs_clarification",
+                    "next_step": "search_flights",
+                    "origin_iata": origin_iata,
+                    "needs_clarification": True,
+                    "clarification_prompt": (
+                        "I need at least one destination to continue. "
+                        "Could you specify a place or nearby airport?"
+                    ),
+                }
+
+            primary_place = resolved_destinations[0][0] if resolved_destinations else destination_place
+            primary_iata = resolved_destinations[0][1] if resolved_destinations else destination_iata
+            has_full_dates = bool(departure_date_str and return_date_str)
             try:
-                if has_full_dates:
-                    quotes = list(
-                        await self.flight_service.get_indicative_roundtrip(
-                            origin_iata=origin_iata,
-                            destination_iata=destination_iata,
-                            departure_date=departure_date_str,
-                            return_date=return_date_str,
-                            limit=self.limit,
-                        )
-                    )
-                else:
+                quotes: List[Dict[str, Any]] = []
+                if anywhere_search:
                     indicative = await self.flight_service.get_indicative_anywhere(
                         origin_iata=origin_iata,
-                        destination_iata=destination_iata,
+                        destination_iata=None,
                         outbound_date=departure_date_str,
                         return_date=return_date_str,
                     )
-                    if not isinstance(indicative, dict):
-                        return {
-                            "hotel_results": [],
-                            "grouped_results": [],
-                            "status": "needs_clarification",
-                            "next_step": "search_flights",
-                            "needs_clarification": True,
-                            "clarification_prompt": (
-                                "Indicative flight search did not return usable results. "
-                                "Could you try a different origin airport or travel month?"
-                            ),
-                        }
-                    quotes = list(indicative.get("quotes") or [])
+                    if isinstance(indicative, dict):
+                        quotes = list(indicative.get("quotes") or [])
+                else:
+                    for place_name, place_iata in resolved_destinations:
+                        if has_full_dates:
+                            destination_quotes = list(
+                                await self.flight_service.get_indicative_roundtrip(
+                                    origin_iata=origin_iata,
+                                    destination_iata=place_iata,
+                                    departure_date=departure_date_str,
+                                    return_date=return_date_str,
+                                    limit=self.limit,
+                                )
+                            )
+                        else:
+                            indicative = await self.flight_service.get_indicative_anywhere(
+                                origin_iata=origin_iata,
+                                destination_iata=place_iata,
+                                outbound_date=departure_date_str,
+                                return_date=return_date_str,
+                            )
+                            if not isinstance(indicative, dict):
+                                continue
+                            destination_quotes = list(indicative.get("quotes") or [])
+
+                        for quote in destination_quotes:
+                            quotes.append(
+                                {
+                                    **quote,
+                                    "destination_place": place_name,
+                                    "destination_iata": place_iata,
+                                }
+                            )
             except Exception as exc:
                 return {
                     "hotel_results": [],
@@ -115,15 +145,11 @@ class SearchFlightsNode:
                 "hotel_results": [],
                 "grouped_results": [],
                 "origin_iata": origin_iata,
-                "destination_place": destination_place,
-                "destination_iata": destination_iata,
+                "destination_place": primary_place,
+                "destination_iata": primary_iata,
                 "person_count": person_count,
                 "status": "flights_ready" if has_full_dates else "indicative_flights_ready",
-                "next_step": (
-                    "search_hotels"
-                    if has_full_dates
-                    else ("select_dates" if destination_iata else "select_destination")
-                ),
+                "next_step": "search_hotels" if not anywhere_search else "select_destination",
                 "needs_clarification": False,
                 "clarification_prompt": None,
             }
@@ -139,6 +165,26 @@ class SearchFlightsNode:
             if resolved_iata:
                 return resolved_iata, place
         return None, None
+
+    async def _resolve_destinations(
+        self,
+        *,
+        destination_iata: str | None,
+        destination_place: str | None,
+        places: List[str],
+    ) -> List[tuple[str, str]]:
+        if destination_iata:
+            return [(destination_place or (places[0] if places else destination_iata), destination_iata)]
+
+        resolved: List[tuple[str, str]] = []
+        seen_iatas: set[str] = set()
+        for place in places:
+            resolved_iata = await self._resolve_iata(place)
+            if not resolved_iata or resolved_iata in seen_iatas:
+                continue
+            seen_iatas.add(resolved_iata)
+            resolved.append((place, resolved_iata))
+        return resolved
 
 
 def _normalize_search_value(value: Any) -> str | None:

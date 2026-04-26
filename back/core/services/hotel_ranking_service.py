@@ -43,19 +43,28 @@ class HotelRankingService:
         check_out: date,
         currency: str = "USD",
     ) -> list[ScoredHotel]:
-        entity_id = await self._resolve_city_entity(destination)
+        resolved_destination = await self._resolve_destination(destination)
 
         search_results = await self._hotel_api.indicative_search(
-            entity_id=entity_id,
+            entity_id=resolved_destination.entity_id,
             check_in=check_in,
             check_out=check_out,
+            search_type=resolved_destination.dest_type or "city",
             currency=currency,
         )
         if not search_results:
-            raise ValueError(f"No hotels found for '{destination}' (entity={entity_id})")
+            raise ValueError(
+                "No hotels found for "
+                f"'{destination}' (entity={resolved_destination.entity_id}, type={resolved_destination.dest_type})"
+            )
 
         hotel_ids = [h.hotel_id for h in search_results]
-        logger.info("Found %d hotels for entity '%s'", len(hotel_ids), entity_id)
+        logger.info(
+            "Found %d hotels for entity '%s' with search_type '%s'",
+            len(hotel_ids),
+            resolved_destination.entity_id,
+            resolved_destination.dest_type,
+        )
 
         contents, descriptions, reviews_by_hotel = await self._fetch_hotel_data(hotel_ids)
         hotels = self._build_hotels(search_results, contents, descriptions, reviews_by_hotel)
@@ -64,19 +73,27 @@ class HotelRankingService:
         return self._score_and_rank(hotels, similarities)
 
     async def _resolve_city_entity(self, destination: str) -> str:
+        return (await self._resolve_destination(destination)).entity_id
+
+    async def _resolve_destination(self, destination: str) -> Destination:
         destinations = await self._hotel_api.autosuggest(destination)
         if not destinations:
             raise ValueError(f"No destinations found for '{destination}'")
 
         city = next((d for d in destinations if d.dest_type == "city"), None)
-        if not city:
-            raise ValueError(
-                f"No city-level destination found for '{destination}'. "
-                f"Got: {[(d.name, d.dest_type) for d in destinations]}"
-            )
+        if city:
+            logger.info("Resolved '%s' → %s (entity=%s type=%s)", destination, city.name, city.entity_id, city.dest_type)
+            return city
 
-        logger.info("Resolved '%s' → %s (entity=%s)", destination, city.name, city.entity_id)
-        return city.entity_id
+        fallback = next((d for d in destinations if d.entity_id), destinations[0])
+        logger.info(
+            "Resolved '%s' → %s (entity=%s type=%s) using non-city fallback",
+            destination,
+            fallback.name,
+            fallback.entity_id,
+            fallback.dest_type,
+        )
+        return fallback
 
     async def _fetch_hotel_data(
         self, hotel_ids: list[str],
